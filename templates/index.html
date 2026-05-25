@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>🔥 Genesis Forge</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #050505; color: #00ff9d; margin: 0; padding: 40px; line-height: 1.6; }
+        h1 { color: #00ff41; text-align: center; }
+        .card { background: #111; border: 1px solid #00ff41; padding: 25px; margin: 20px 0; border-radius: 8px; }
+        button { background: #00ff41; color: black; border: none; padding: 12px 24px; font-weight: bold; cursor: pointer; }
+        .history { font-size: 0.9em; opacity: 0.8; }
+    </style>
+</head>
+<body>
+    <h1>🌌 GENESIS FORGE v1.0</h1>
+    <p style="text-align:center">The autonomous engine that invents brand-new digital businesses while you sleep.</p>
+    
+    <div class="card">
+        <h2>🚀 Latest Invention</h2>
+        <h3>{{ idea.title }}</h3>
+        <p><strong>Description:</strong> {{ idea.description }}</p>
+        <p><strong>Why revolutionary:</strong> {{ idea.why_new }}</p>
+        <p><strong>Suggested price:</strong> {{ idea.price_suggestion }}</p>
+        
+        <a href="/download/genesis_bundle.zip"><button>⬇️ Download Full Launch Bundle (ZIP)</button></a>
+    </div>
+    
+    <div class="card">
+        <h2>Current Trends Fused</h2>
+        <ul>{% for trend in trends %}<li>{{ trend }}</li>{% endfor %}</ul>
+    </div>
+    
+    <div class="card history">
+        <h2>Forge Memory — Previous Creations</h2>
+        <ul>{% for past in history %}<li>{{ past }}</li>{% endfor %}</ul>
+    </div>
+    
+    <p style="text-align:center; margin-top:40px; opacity:0.6">
+        Refresh page to forge new idea • Products ready for Gumroad / Etsy / Stan Store
+    </p>
+</body>
+</html>

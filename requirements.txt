@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+jinja2
+requests
+beautifulsoup4
+fpdf2
+apscheduler
+python-dotenv
