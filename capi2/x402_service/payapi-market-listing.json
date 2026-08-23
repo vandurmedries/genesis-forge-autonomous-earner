@@ -12,7 +12,7 @@
     ],
     "endpoint_method": "POST",
     "endpoint_path": "/v1/claim-verify",
-    "base_url": null,
+    "base_url": "https://capi2-claim-verify.onrender.com",
     "price_per_request_usdc": "0.01",
     "network": "eip155:8453",
     "asset": "USDC",
@@ -27,6 +27,8 @@
     "health_path": "/health",
     "agent_manifest_path": "/.well-known/agent.json",
     "schema_path": "/v1/claim-verify/schema",
-    "status": "pending_public_deployment"
+    "render_deploy_status": "live",
+    "runtime_startup_verified": true,
+    "external_x402_marketplace_check": "requested"
   }
 }
