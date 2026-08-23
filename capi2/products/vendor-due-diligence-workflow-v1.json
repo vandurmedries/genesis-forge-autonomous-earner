@@ -1,0 +1,53 @@
+{
+  "product": "capi2 Vendor Due Diligence Workflow",
+  "version": "1.0",
+  "purpose": "Machine-readable public-evidence due-diligence workflow for procurement, vendor risk, RFP, contract, and AI-governance agents.",
+  "input_schema": {
+    "vendor_name": "string",
+    "vendor_url": "https URL",
+    "intended_use": "string",
+    "data_classification": "public | internal | confidential | restricted",
+    "jurisdiction": "optional string"
+  },
+  "checks": [
+    "legal entity and official company identity",
+    "security/trust center availability",
+    "SOC 2 / ISO 27001 / other claimed certifications",
+    "privacy policy and DPA availability",
+    "subprocessor disclosure",
+    "data retention/deletion statements",
+    "customer-data use for model training",
+    "encryption statements",
+    "access-control/SSO/MFA claims",
+    "incident-response and breach-notification statements",
+    "business continuity/disaster recovery evidence",
+    "SLA/uptime claims and public status history",
+    "product/integration claims material to the purchase",
+    "pricing/contract term claims material to the purchase",
+    "AI governance/model transparency disclosures",
+    "known public security incidents",
+    "regulatory or enforcement references",
+    "support/contact/escalation path",
+    "documentation freshness and contradictions",
+    "missing evidence requiring internal vendor follow-up"
+  ],
+  "output_schema": {
+    "overall_risk": "low | medium | high | insufficient_evidence",
+    "findings": [{"check":"string","status":"supported | partial | missing | conflicting","evidence":"string","source_urls":["https://..."],"severity":"info | low | medium | high"}],
+    "critical_gaps": ["string"],
+    "buyer_questions": ["string"],
+    "recommended_routes": [{"task":"string","specialist":"claim_verifier | security | privacy | legal | RFP | finance | human_review"}],
+    "decision_note": "proceed | proceed_with_conditions | hold_for_evidence | escalate"
+  },
+  "scoring_guidance": {
+    "low": "Material public evidence exists and no high-severity contradiction is found.",
+    "medium": "Important evidence is partial or several material questions remain open.",
+    "high": "A high-impact contradiction, material incident, or major control/evidence gap is found.",
+    "insufficient_evidence": "Public information is too limited for a responsible risk conclusion."
+  },
+  "constraints": [
+    "Public-evidence due diligence is not a substitute for confidential assurance reports, technical testing, legal advice, or regulated professional opinions.",
+    "Do not treat vendor marketing copy alone as independent verification.",
+    "Preserve source URLs and dates so another agent can audit the conclusion."
+  ]
+}
