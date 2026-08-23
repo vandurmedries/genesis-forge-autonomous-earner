@@ -1,0 +1,39 @@
+{
+  "product": "capi2 Claim Evidence Pack",
+  "version": "1.0",
+  "purpose": "Machine-readable workflow for checking whether a public vendor/source URL contains evidence that supports a specific claim.",
+  "input_schema": {
+    "vendor_name": "string",
+    "vendor_url": "https URL",
+    "claim": "single factual claim",
+    "context": "optional string"
+  },
+  "output_schema": {
+    "verification_status": "supported_on_source | partially_supported | uncertain | contradicted_on_source",
+    "evidence_summary": "concise source-backed explanation",
+    "evidence_source_urls": ["https://..."],
+    "evidence_excerpt": "short relevant excerpt or paraphrase",
+    "confidence": "0.00-1.00",
+    "next_action": "accept | request_more_evidence | escalate"
+  },
+  "evidence_rules": [
+    "Prefer primary vendor, regulator, certification body, standards body, or official status pages.",
+    "Separate evidence that a vendor publishes a claim from evidence that independently verifies the claim.",
+    "Do not infer certifications, SLAs, privacy guarantees, integrations, or regulatory status from marketing language alone.",
+    "Return uncertain when evidence is missing, stale, inaccessible, or materially ambiguous.",
+    "Record the exact URL and retrieval date for each material finding.",
+    "For contradictory sources, prefer the more authoritative and more recent source and explain the conflict."
+  ],
+  "status_logic": {
+    "supported_on_source": "Direct authoritative evidence supports the material elements of the claim.",
+    "partially_supported": "Some material elements are supported but at least one important qualifier is missing.",
+    "uncertain": "Evidence is insufficient or ambiguous.",
+    "contradicted_on_source": "An authoritative source explicitly conflicts with the claim."
+  },
+  "agent_prompt": "Verify the supplied claim only. Search or inspect public sources, rank sources by authority and recency, return the output schema exactly, do not invent missing facts, and mark uncertainty explicitly.",
+  "recommended_routes": {
+    "security_or_compliance": "route to vendor-security/compliance specialist when interpretation is needed",
+    "contractual_claim": "route to contract/RFP specialist after factual evidence is collected",
+    "legal_conclusion": "escalate to qualified human/legal review rather than asserting a legal conclusion"
+  }
+}
