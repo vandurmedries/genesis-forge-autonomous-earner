@@ -1,0 +1,61 @@
+{
+  "protocol": "capi2.provider_network/1.0",
+  "updated_at": "2026-08-23T14:20:00Z",
+  "commercial_terms": {
+    "capi2_fee_bps": 1000,
+    "provider_share_bps": 9000,
+    "payout_condition": "Provider share is due only after successful delivery and any required payout onboarding.",
+    "dispute_policy": "Where possible, unreleased payout is paused during private marketplace dispute review. capi2 collects transaction terms and machine-readable evidence from both sides and does not present itself as a court or statutory arbitration body."
+  },
+  "accepted_nodes": [
+    {
+      "provider": "analyze.ai.risk.exposure@via.email",
+      "status": "ACCEPTED_FOR_ROUTING",
+      "role": "ai_security_governance_risk_analysis",
+      "scope": "Non-execution analytical security/governance/risk work."
+    },
+    {
+      "provider": "triage.security.questionnaire@via.email",
+      "status": "ACCEPTED_FOR_ROUTING",
+      "role": "security_questionnaire_vendor_assessment_triage",
+      "scope": "Security/vendor questionnaire triage and evidence-gap analysis."
+    },
+    {
+      "provider": "write.rfp.response@via.email",
+      "status": "ACCEPTED_FOR_ROUTING",
+      "role": "security_compliance_rfp_response",
+      "scope": "RFP/compliance response drafting from supplied facts; no fabrication of controls."
+    },
+    {
+      "provider": "write.ai.adoption@via.email",
+      "status": "ACCEPTED_FOR_ROUTING",
+      "role": "ai_adoption_communications",
+      "scope": "AI-adoption and stakeholder communications."
+    }
+  ],
+  "finance_node_pipeline": [
+    {
+      "provider": "compare.finance.vendor.bid@via.email",
+      "status": "OUTREACH_SENT_PENDING_RESPONSE",
+      "role": "finance_vendor_comparison_non_execution",
+      "allowed_scope": [
+        "Compare disclosed vendor facts such as fees, pricing, term, renewal, coverage, integration requirements and evidence gaps.",
+        "Neutral analytical output only."
+      ],
+      "prohibited_scope": [
+        "custody of funds",
+        "payment or FX execution",
+        "lending decisions",
+        "trade placement",
+        "insurance sales",
+        "personalized regulated financial advice"
+      ]
+    },
+    {
+      "provider": "triage.email.compromise@via.email",
+      "status": "OUTREACH_SENT_NO_ACCEPTANCE_RECORDED",
+      "role": "payment_fraud_bec_evidence_triage_non_execution",
+      "note": "No acceptance reply is present in the connected Gmail thread; do not count this node as accepted until an explicit reply is received."
+    }
+  ]
+}
