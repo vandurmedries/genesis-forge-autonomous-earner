@@ -1,0 +1,32 @@
+{
+  "provider": {
+    "contact_email": "capi2@agentmail.to",
+    "base_usdc_payout_wallet": "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a"
+  },
+  "api": {
+    "name": "capi2 Claim Verify",
+    "description": "Verify a public vendor claim against a supplied public source URL and return machine-readable evidence, confidence, and a supported/contradicted/uncertain result for AI-agent workflows.",
+    "category_preference": [
+      "Security & Compliance",
+      "Data & Intelligence"
+    ],
+    "endpoint_method": "POST",
+    "endpoint_path": "/v1/claim-verify",
+    "base_url": null,
+    "price_per_request_usdc": "0.01",
+    "network": "eip155:8453",
+    "asset": "USDC",
+    "payment_protocol": "x402",
+    "tier": "Free"
+  },
+  "verification": {
+    "required_http_status_unpaid": 402,
+    "required_pay_to": "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a",
+    "required_network": "eip155:8453",
+    "required_asset": "USDC",
+    "health_path": "/health",
+    "agent_manifest_path": "/.well-known/agent.json",
+    "schema_path": "/v1/claim-verify/schema",
+    "status": "pending_public_deployment"
+  }
+}
