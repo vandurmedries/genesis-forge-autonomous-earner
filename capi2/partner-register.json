@@ -1,0 +1,75 @@
+{
+  "protocol": "capi2.partner_register/1.0",
+  "updated_at": "2026-08-23T13:58:00Z",
+  "marketplace": {
+    "fee_bps": 1000,
+    "provider_share_bps": 9000,
+    "policy": "Do not promote a financial provider or claim referral economics until capi2 is formally approved and an official tracked arrangement is active. Regulated execution remains with licensed/authorized providers."
+  },
+  "partners": [
+    {
+      "name": "Wise",
+      "status": "OUTREACH_SENT_AUTO_ACK_APPLICATION_ROUTE_AVAILABLE_NOT_APPROVED",
+      "permitted_economics": "Commission for each new referred user; potentially higher commission for large-transfer and business referrals; exact rate is program/region specific and not yet approved for capi2.",
+      "promotion_allowed": false,
+      "constraints": [
+        "Commercial promotion requires an approved partner/invite program and tracking link.",
+        "No paid advertising without explicit prior written consent under Wise partner guidelines.",
+        "Only promote supported Wise services/countries.",
+        "capi2 remains referral/software routing only and does not execute or custody payments."
+      ],
+      "official_routes": ["Wise business partnership interest form", "Partnerize SEO affiliate route"]
+    },
+    {
+      "name": "Airwallex",
+      "status": "SUPPORT_CONFIRMED_PARTNER_ENQUIRY_ROUTE_NOT_APPROVED",
+      "permitted_economics": "Commission on each qualified new customer referral; tailored commission after application approval; tracking/reporting/payouts handled through the approved partner channel.",
+      "promotion_allowed": false,
+      "constraints": [
+        "Membership is subject to Airwallex approval.",
+        "No commission claim or tracked referral until formal approval.",
+        "capi2 does not execute or custody payments or FX."
+      ],
+      "official_routes": ["Airwallex Partner page", "Affiliate Programme / Impact.com"]
+    },
+    {
+      "name": "Alpaca Europe",
+      "status": "SALES_OUTREACH_SENT_NOT_APPROVED",
+      "permitted_economics": "No public referral commission rate verified; commercial terms require a direct sales/partner agreement.",
+      "promotion_allowed": false,
+      "constraints": [
+        "Alpaca Europe performs regulated brokerage functions under its applicable EU framework.",
+        "capi2 must not place trades, custody assets, give personalized investment advice, or represent itself as a broker.",
+        "Any regulated onboarding/execution step must remain with Alpaca Europe or another authorized provider."
+      ],
+      "official_routes": ["Alpaca Europe Broker API sales"]
+    },
+    {
+      "name": "Qover",
+      "status": "INQUIRY_RECEIVED_TICKET_W6G0D4-66MY2_NOT_APPROVED",
+      "permitted_economics": "Qover may remunerate Business Introducers and other intermediaries by commission or other economic benefit; exact capi2 economics are not approved.",
+      "promotion_allowed": false,
+      "constraints": [
+        "Business Introducer activity remains lead-generation/generic-information only unless a licensed or exempt distribution role is formally established.",
+        "Qover remains the regulated insurance intermediary/distribution layer.",
+        "capi2 must not sell insurance, collect premiums, underwrite, bind cover, or give personalized regulated insurance advice."
+      ],
+      "official_routes": ["Qover Partnerships / Business Development inquiry"]
+    }
+  ],
+  "marketplace_routes": [
+    {
+      "name": "PayAPI Market",
+      "status": "REVIEW_BLOCKED_PENDING_PUBLIC_X402_ENDPOINT",
+      "economics": "Listing is free; providers keep 100% of buyer payment on PayAPI Market.",
+      "requirements": [
+        "Public URL callable without login or Vercel protection.",
+        "x402 on the route: HTTP 402, price in USDC on Base, payTo set to capi2 wallet.",
+        "Stable host; custom domain preferred.",
+        "Submit via PayAPI Market normal listing form with wallet, price and public base URL.",
+        "After free checks, PayAPI Market may run one small paid verification test."
+      ],
+      "last_partner_reply_at": "2026-08-23T13:13:56Z"
+    }
+  ]
+}
