@@ -1,9 +1,9 @@
 name: capi2 PayanAgent bootstrap
 
 on:
-  push:
+  pull_request:
     paths:
-      - '.github/workflows/capi2-payanagent-bootstrap.yml'
+      - 'capi2/trigger/**'
   workflow_dispatch:
 
 permissions:
@@ -20,8 +20,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          AGENT_PAYLOAD=$(jq -n --arg wallet "$PAYOUT_WALLET" '{
-            name:"capi2-a2a",
+          AGENT_PAYLOAD=$(jq -n --arg wallet "$PAYOUT_WALLET" --arg run "$GITHUB_RUN_ID" '{
+            name:("capi2-a2a-" + $run),
             description:"Agent-to-agent vendor evidence, procurement/compliance due diligence, RFP/security triage, and commercial-readiness workflows.",
             walletAddress:$wallet,
             chain:"base",
