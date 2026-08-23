@@ -1,0 +1,32 @@
+{
+  "product": "capi2 Security Questionnaire Triage Pack",
+  "version": "1.0",
+  "purpose": "Agent workflow for triaging vendor security/privacy questionnaires before response drafting.",
+  "input_schema": {
+    "questionnaire_text": "string or structured list of questions",
+    "company_context": "optional security/legal/IT ownership context",
+    "approved_answers": "optional previously approved statements"
+  },
+  "output_schema": {
+    "executive_summary": "2-3 sentences",
+    "complexity": "light | moderate | heavy",
+    "clusters": [{"name":"string","question_ids":["string"],"evidence_needed":true}],
+    "likely_blockers": [{"question_id":"string","reason":"string","severity":"low | medium | high"}],
+    "suggested_owners": [{"cluster":"string","owner":"security | legal | privacy | IT | product | other"}],
+    "evidence_requests": [{"question_id":"string","required_evidence":"string"}],
+    "recommended_next_email": "3-5 sentence non-committal professional draft"
+  },
+  "triage_rules": [
+    "Do not fabricate certifications or control implementation.",
+    "Separate questions that can be answered from approved evidence from those requiring internal verification.",
+    "Flag questions involving data retention, subprocessors, incident response, encryption, access control, BCP/DR, certifications, penetration tests, AI training/use of customer data, and regulatory commitments.",
+    "Mark legal interpretation separately from technical evidence collection.",
+    "Prioritize potential deal blockers and missing proof before drafting polished answers."
+  ],
+  "agent_prompt": "Cluster the questions, identify 3-5 likely blockers, identify evidence gaps, suggest internal owners only when context allows, and never answer a control question with an invented commitment.",
+  "routing": {
+    "public_vendor_claim": "route to claim verification",
+    "security_control_answer": "route to RFP/security response specialist",
+    "privacy_or_legal_interpretation": "route to qualified privacy/legal reviewer"
+  }
+}
