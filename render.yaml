@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: capi2-claim-verify
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: capi2/x402_service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: CAPI2_PAY_TO
+        value: 0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a
+      - key: CAPI2_X402_NETWORK
+        value: eip155:8453
+      - key: CAPI2_X402_FACILITATOR
+        value: https://facilitator.payai.network
+      - key: CAPI2_CLAIM_VERIFY_PRICE
+        value: "$0.01"
