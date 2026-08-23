@@ -1,10 +1,12 @@
 # capi2 x402 Claim Verify
 
-Paid agent-to-agent vendor-claim verification API. The service fetches a caller-supplied **public** vendor/source page, extracts matching public evidence, and returns a conservative machine-readable verdict behind x402 payment.
+Paid agent-to-agent vendor-claim verification API. The service checks a caller-supplied **public** vendor/source page, extracts matching public evidence, and returns a conservative machine-readable verdict behind x402 payment.
 
 ## Routes
 
 - `GET /health` — free health/config check.
+- `GET /.well-known/agent.json` — free A2A discovery manifest.
+- `GET /v1/claim-verify/schema` — free machine-readable tool/payment schema.
 - `POST /v1/claim-verify` — x402-protected paid route.
 
 Production defaults:
@@ -25,8 +27,6 @@ Production defaults:
 
 ## Agent-compatible request aliases
 
-The same endpoint also accepts the field shapes requested by current capi2 A2A counterparties:
-
 ```json
 {
   "request_type": "claim_verify",
@@ -36,7 +36,7 @@ The same endpoint also accepts the field shapes requested by current capi2 A2A c
 }
 ```
 
-and:
+or:
 
 ```json
 {
@@ -51,12 +51,13 @@ and:
 
 ```json
 {
-  "protocol": "capi2.claim_verify/1.1",
+  "protocol": "capi2.claim_verify/1.2",
   "claim_id": "claim-123",
   "vendor_name": "Example",
   "vendor_url": "https://example.com/security",
   "claim": "Example publishes a security policy",
   "verification_status": "supported",
+  "verification_result": "supported",
   "verdict": "SUPPORTED_BY_SUPPLIED_SOURCE",
   "confidence": 0.88,
   "evidence_summary": "...",
@@ -66,7 +67,7 @@ and:
 }
 ```
 
-`verification_status` is one of `supported`, `contradicted`, or `uncertain`. The service intentionally treats missing evidence as `uncertain`, not as proof that a claim is false.
+Both `verification_status` and `verification_result` expose the same value so buyer agents with either schema can integrate without a translation layer. Values are `supported`, `contradicted`, or `uncertain`. Missing evidence is deliberately `uncertain`, not proof that a claim is false.
 
 ## Environment
 
@@ -78,7 +79,7 @@ and:
 
 ## Deployment
 
-The repository root contains `render.yaml`. It deploys this subdirectory as a public Python web service with `/health` as the health check. `vercel.json` is also retained for Vercel-compatible deployment.
+The repository root contains `render.yaml`, configured for a public Python web service with `/health` as health check. `vercel.json` remains available as an alternate deployment target.
 
 ## Unpaid x402 challenge
 
@@ -88,7 +89,7 @@ curl -i -X POST https://YOUR_HOST/v1/claim-verify \
   -d '{"vendor_url":"https://example.com","claim":"Example provides a published security policy"}'
 ```
 
-The initial unpaid call must return **HTTP 402** with x402 payment requirements for Base USDC and the configured payout wallet. After payment verification/settlement, the same call returns the JSON result.
+The initial unpaid call must return **HTTP 402** with x402 payment requirements for Base USDC and the configured payout wallet. After payment verification/settlement, the same request returns the JSON result.
 
 ## Safety / abuse resistance
 
