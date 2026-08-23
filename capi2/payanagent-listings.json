@@ -1,0 +1,29 @@
+{
+  "protocol": "capi2.payanagent_registry/1.0",
+  "created_at": "2026-08-23T11:54:34Z",
+  "network": "base",
+  "settlement_asset": "USDC",
+  "payout_wallet": "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a",
+  "agent_id": "j574zx5t73z1ec81vj16szeb8n8d0mpa",
+  "offers": [
+    {
+      "offer_id": "kh76k1r509sc68nfd3zhyjpky58d16s7",
+      "title": "Claim Evidence Pack — vendor claim verification schema",
+      "price_usd": 0.50,
+      "buy_url": "https://payanagent.com/x402/kh76k1r509sc68nfd3zhyjpky58d16s7"
+    },
+    {
+      "offer_id": "kh7a91n9ykdd5m3peyan2fzagn8d1kqs",
+      "title": "Security Questionnaire Triage Pack",
+      "price_usd": 1.90,
+      "buy_url": "https://payanagent.com/x402/kh7a91n9ykdd5m3peyan2fzagn8d1kqs"
+    },
+    {
+      "offer_id": "kh70nete5m3x13r4vm38qwk50x8d103d",
+      "title": "Vendor Due Diligence Workflow — 20 public-evidence checks",
+      "price_usd": 4.90,
+      "buy_url": "https://payanagent.com/x402/kh70nete5m3x13r4vm38qwk50x8d103d"
+    }
+  ],
+  "note": "PayanAgent seller API key was used ephemerally during bootstrap and was not committed to this registry. Payments settle in USDC on Base to payout_wallet."
+}
