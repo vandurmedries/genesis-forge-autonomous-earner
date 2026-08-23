@@ -1,0 +1,1 @@
+Trigger capi2 PayanAgent provider registration and initial A2A product listings.
