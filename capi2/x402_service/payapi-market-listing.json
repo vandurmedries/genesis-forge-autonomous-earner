@@ -5,28 +5,65 @@
   },
   "api": {
     "name": "capi2 Claim Verify",
-    "description": "Verify a public vendor claim against a supplied public source URL and return machine-readable evidence, confidence, and a supported/contradicted/uncertain result for AI-agent workflows.",
+    "description": "Evidence-backed public-source verification for vendor, AI/SaaS, security, compliance, procurement, RFP and commercial claims. Built for autonomous agents that need to check a claim before trusting, routing or acting on it.",
     "category_preference": [
       "Security & Compliance",
       "Data & Intelligence"
     ],
+    "search_keywords": [
+      "vendor verification",
+      "claim verification",
+      "fact checking",
+      "due diligence",
+      "procurement evidence",
+      "vendor risk",
+      "AI vendor risk",
+      "SaaS trust",
+      "RFP evidence",
+      "security claim verification"
+    ],
+    "buyer_queries": [
+      "verify a vendor claim against public evidence",
+      "fact check an AI vendor or SaaS claim",
+      "procurement due diligence evidence",
+      "vendor risk evidence check",
+      "RFP or security questionnaire claim verification"
+    ],
     "base_url": "https://capi2-claim-verify.onrender.com",
-    "discovery_path": "/.well-known/agent.json",
+    "discovery_paths": {
+      "x402": "/.well-known/x402",
+      "agent": "/.well-known/agent.json",
+      "openapi": "/openapi.json",
+      "llms": "/llms.txt",
+      "robots": "/robots.txt",
+      "examples": "/v1/examples"
+    },
     "quote_path": "/v1/quote",
     "endpoint_method": "POST",
     "endpoint_path": "/v1/claim-verify",
+    "input_example": {
+      "vendor_url": "https://example.com/security",
+      "claim": "Vendor states that customer data is encrypted at rest.",
+      "request_type": "vendor_due_diligence"
+    },
     "result_delivery": "inline_json_after_successful_x402_payment_and_execution",
     "price_per_request_usdc": "0.01",
     "network": "eip155:8453",
     "asset": "USDC",
     "payment_protocol": "x402",
+    "bazaar_discovery_extension": true,
     "tier": "Free"
   },
   "autonomous_lifecycle": [
     {
       "step": "discover",
       "method": "GET",
-      "path": "/.well-known/agent.json"
+      "paths": [
+        "/.well-known/x402",
+        "/.well-known/agent.json",
+        "/openapi.json",
+        "/llms.txt"
+      ]
     },
     {
       "step": "quote",
@@ -53,11 +90,13 @@
     "required_asset": "USDC",
     "health_path": "/health",
     "agent_manifest_path": "/.well-known/agent.json",
+    "x402_manifest_path": "/.well-known/x402",
     "quote_path": "/v1/quote",
     "schema_path": "/v1/claim-verify/schema",
     "openapi_path": "/openapi.json",
-    "render_deploy_status": "live",
-    "runtime_startup_verified": true,
-    "external_x402_marketplace_check": "requested"
+    "llms_path": "/llms.txt",
+    "render_deploy_status": "deploying_discovery_upgrade",
+    "runtime_startup_verified": false,
+    "external_x402_marketplace_check": "recrawl_requested_after_discovery_upgrade"
   }
 }
