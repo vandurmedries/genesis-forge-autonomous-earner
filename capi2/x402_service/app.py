@@ -8,8 +8,10 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
+from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
@@ -20,13 +22,95 @@ PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
 NETWORK = os.getenv("CAPI2_X402_NETWORK", "eip155:8453")
 FACILITATOR_URL = os.getenv("CAPI2_X402_FACILITATOR", "https://facilitator.payai.network")
 PRICE = os.getenv("CAPI2_CLAIM_VERIFY_PRICE", "$0.01")
+PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-verify.onrender.com").rstrip("/")
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
 MAX_REDIRECTS = 3
 
+BUYER_TAGS = ["claim verification", "vendor risk", "due diligence", "fact checking", "procurement"]
+BUYER_QUERIES = [
+    "verify a vendor claim against public evidence",
+    "fact check an AI vendor or SaaS claim",
+    "procurement due diligence evidence",
+    "vendor risk evidence check",
+    "RFP or security questionnaire claim verification",
+]
+
+CLAIM_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "vendor_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Public source URL containing evidence relevant to the claim.",
+        },
+        "claim": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1200,
+            "description": "Vendor, product, compliance, security, or commercial claim to verify.",
+        },
+        "vendor_name": {"type": "string", "maxLength": 200},
+        "claim_id": {"type": "string", "maxLength": 200},
+        "request_type": {"type": "string", "maxLength": 120},
+        "verification_type": {"type": "string", "maxLength": 120},
+    },
+    "required": ["vendor_url", "claim"],
+    "additionalProperties": True,
+}
+
+CLAIM_OUTPUT_EXAMPLE = {
+    "protocol": "capi2.claim_verify/1.4.0",
+    "vendor_url": "https://example.com/security",
+    "claim": "Vendor states that customer data is encrypted at rest.",
+    "verification_status": "supported",
+    "verification_result": "supported",
+    "verdict": "SUPPORTED_BY_SUPPLIED_SOURCE",
+    "confidence": 0.88,
+    "evidence_summary": "Example public-source evidence supporting the claim.",
+    "evidence_source_urls": ["https://example.com/security"],
+    "evidence": [{"text": "Example evidence sentence.", "score": 0.9}],
+    "caveats": ["Checks only the supplied public URL."],
+}
+
+CLAIM_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "protocol": {"type": "string"},
+        "claim_id": {"type": ["string", "null"]},
+        "vendor_name": {"type": ["string", "null"]},
+        "vendor_url": {"type": "string"},
+        "claim": {"type": "string"},
+        "verification_status": {"type": "string", "enum": ["supported", "contradicted", "uncertain"]},
+        "verification_result": {"type": "string", "enum": ["supported", "contradicted", "uncertain"]},
+        "verdict": {"type": "string"},
+        "confidence": {"type": "number"},
+        "evidence_summary": {"type": "string"},
+        "evidence_source_urls": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "object"}},
+        "caveats": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "protocol",
+        "vendor_url",
+        "claim",
+        "verification_status",
+        "verification_result",
+        "verdict",
+        "confidence",
+        "evidence_summary",
+        "evidence_source_urls",
+        "evidence",
+        "caveats",
+    ],
+}
+
 app = FastAPI(
     title="capi2 Claim Verify",
-    version="1.3.2",
-    description="Agent-discoverable public-evidence vendor claim verification with x402 payment on Base USDC.",
+    version="1.4.0",
+    description=(
+        "Agent-discoverable paid public-evidence verification for vendor, procurement, "
+        "due-diligence, RFP, security and commercial claims using x402 on Base USDC."
+    ),
 )
 
 facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
@@ -43,8 +127,26 @@ routes = {
                 network=NETWORK,
             )
         ],
+        resource=f"{PUBLIC_ORIGIN}/v1/claim-verify",
         mime_type="application/json",
-        description="Verify one public vendor claim against a supplied public source URL and return machine-readable evidence.",
+        description=(
+            "Verify one public vendor, product, security, compliance, procurement or commercial "
+            "claim against a supplied public URL and return machine-readable evidence, verdict "
+            "and confidence for autonomous-agent workflows."
+        ),
+        service_name="capi2 Claim Verify",
+        tags=BUYER_TAGS,
+        extensions=declare_discovery_extension(
+            input={
+                "vendor_url": "https://example.com/security",
+                "claim": "Vendor states that customer data is encrypted at rest.",
+                "vendor_name": "Example Vendor",
+                "request_type": "vendor_due_diligence",
+            },
+            input_schema=CLAIM_INPUT_SCHEMA,
+            body_type="json",
+            output=OutputConfig(example=CLAIM_OUTPUT_EXAMPLE, schema=CLAIM_OUTPUT_SCHEMA),
+        ),
     )
 }
 
@@ -84,7 +186,7 @@ class EvidenceSnippet(BaseModel):
 
 
 class ClaimVerifyResponse(BaseModel):
-    protocol: str = "capi2.claim_verify/1.3.2"
+    protocol: str = "capi2.claim_verify/1.4.0"
     claim_id: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_url: str
@@ -156,7 +258,7 @@ def _validate_public_http_url(url: str) -> None:
 
 def _fetch_public_source(url: str) -> tuple[str, str]:
     current = url
-    headers = {"User-Agent": "capi2-claim-verify/1.3.2 (+public-evidence-check)"}
+    headers = {"User-Agent": "capi2-claim-verify/1.4.0 (+public-evidence-check)"}
 
     for _ in range(MAX_REDIRECTS + 1):
         _validate_public_http_url(current)
@@ -216,7 +318,14 @@ def _lifecycle() -> list[dict]:
         {
             "step": "discover",
             "method": "GET",
-            "paths": ["/.well-known/x402", "/.well-known/agent.json", "/openapi.json"],
+            "paths": [
+                "/",
+                "/.well-known/x402",
+                "/.well-known/agent.json",
+                "/openapi.json",
+                "/llms.txt",
+                "/robots.txt",
+            ],
             "payment_required": False,
         },
         {
@@ -248,23 +357,36 @@ def _lifecycle() -> list[dict]:
 
 def _quote() -> dict:
     return {
-        "protocol": "capi2.quote/1.0",
+        "protocol": "capi2.quote/1.1",
         "service": "claim_verify",
-        "description": "Verify one public vendor claim against one supplied public source URL.",
+        "service_name": "capi2 Claim Verify",
+        "description": (
+            "Verify one vendor, product, compliance, security, procurement or commercial claim "
+            "against one supplied public source URL."
+        ),
         "price": PRICE,
         "asset": "USDC",
         "network": NETWORK,
         "payment_protocol": "x402",
         "pay_to": PAY_TO,
+        "tags": BUYER_TAGS,
+        "buyer_queries": BUYER_QUERIES,
         "execute": {
             "method": "POST",
+            "url": f"{PUBLIC_ORIGIN}/v1/claim-verify",
             "path": "/v1/claim-verify",
             "content_type": "application/json",
+            "input_schema": CLAIM_INPUT_SCHEMA,
+            "example_body": {
+                "vendor_url": "https://example.com/security",
+                "claim": "Vendor states that customer data is encrypted at rest.",
+            },
         },
         "result": {
             "mode": "inline",
             "success_status": 200,
             "content_type": "application/json",
+            "example": CLAIM_OUTPUT_EXAMPLE,
         },
         "marketplace": {
             "standard_fee_bps": 1000,
@@ -277,27 +399,49 @@ def _quote() -> dict:
 def _x402_manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "description": "Paid public-evidence vendor claim verification for autonomous agents.",
-        "homepage": "https://capi2-claim-verify.onrender.com",
+        "service_name": "capi2 Claim Verify",
+        "description": (
+            "Paid evidence-backed verification for vendor claims, AI/SaaS due diligence, "
+            "procurement, RFP and security workflows."
+        ),
+        "homepage": PUBLIC_ORIGIN,
         "protocol": "x402",
         "network": NETWORK,
         "asset": "USDC",
         "payTo": PAY_TO,
+        "tags": BUYER_TAGS,
+        "buyer_queries": BUYER_QUERIES,
         "resources": [
             {
                 "name": "capi2 Claim Verify",
+                "resource": f"{PUBLIC_ORIGIN}/v1/claim-verify",
                 "endpoint": "POST /v1/claim-verify",
                 "method": "POST",
                 "price_usd": _price_usd(),
-                "summary": "Verify one public vendor claim against a supplied public source URL and return machine-readable evidence.",
+                "tags": BUYER_TAGS,
+                "summary": (
+                    "Verify a vendor, product, security, compliance, procurement or commercial "
+                    "claim against a supplied public source URL."
+                ),
+                "input_schema": CLAIM_INPUT_SCHEMA,
+                "example_request": {
+                    "vendor_url": "https://example.com/security",
+                    "claim": "Vendor states that customer data is encrypted at rest.",
+                },
+                "output_example": CLAIM_OUTPUT_EXAMPLE,
+                "discovery_extension": "bazaar",
             }
         ],
         "free_endpoints": [
+            "/",
             "/health",
+            "/robots.txt",
+            "/llms.txt",
             "/.well-known/x402",
             "/.well-known/agent.json",
             "/openapi.json",
             "/v1/quote",
+            "/v1/examples",
             "/v1/claim-verify/schema",
         ],
     }
@@ -306,15 +450,30 @@ def _x402_manifest() -> dict:
 def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "protocol": "capi2.claim_verify/1.3.2",
-        "description": "Verify a public vendor claim against a supplied public source URL.",
+        "protocol": "capi2.claim_verify/1.4.0",
+        "description": (
+            "Evidence-backed public-source claim verification for AI agents performing vendor "
+            "risk, due diligence, procurement, RFP, security and commercial workflows."
+        ),
+        "service_name": "capi2 Claim Verify",
+        "tags": BUYER_TAGS,
+        "buyer_queries": BUYER_QUERIES,
         "discovery": {
             "x402": "/.well-known/x402",
             "agent": "/.well-known/agent.json",
             "openapi": "/openapi.json",
+            "llms": "/llms.txt",
+            "robots": "/robots.txt",
+            "quote": "/v1/quote",
+            "examples": "/v1/examples",
+            "bazaar_extension": True,
         },
         "quote": {"method": "GET", "path": "/v1/quote"},
-        "endpoint": {"method": "POST", "path": "/v1/claim-verify"},
+        "endpoint": {
+            "method": "POST",
+            "path": "/v1/claim-verify",
+            "url": f"{PUBLIC_ORIGIN}/v1/claim-verify",
+        },
         "lifecycle": _lifecycle(),
         "payment": {
             "protocol": "x402",
@@ -325,6 +484,7 @@ def _manifest() -> dict:
         },
         "input": {
             "canonical": {"vendor_url": "https://...", "claim": "..."},
+            "schema": CLAIM_INPUT_SCHEMA,
             "aliases": [
                 ["context_url", "claim_to_verify"],
                 ["vendor_url", "claim_text"],
@@ -336,7 +496,29 @@ def _manifest() -> dict:
             "status_fields": ["verification_status", "verification_result"],
             "status_values": ["supported", "contradicted", "uncertain"],
             "evidence_fields": ["evidence_summary", "evidence_source_urls", "evidence"],
+            "example": CLAIM_OUTPUT_EXAMPLE,
         },
+    }
+
+
+@app.get("/")
+async def root():
+    return {
+        "name": "capi2 Claim Verify",
+        "paid": True,
+        "price": PRICE,
+        "asset": "USDC",
+        "network": NETWORK,
+        "what_it_does": "Verify a public vendor or product claim against a supplied public source URL.",
+        "best_for": BUYER_QUERIES,
+        "discover": {
+            "x402": f"{PUBLIC_ORIGIN}/.well-known/x402",
+            "agent": f"{PUBLIC_ORIGIN}/.well-known/agent.json",
+            "openapi": f"{PUBLIC_ORIGIN}/openapi.json",
+            "llms": f"{PUBLIC_ORIGIN}/llms.txt",
+            "quote": f"{PUBLIC_ORIGIN}/v1/quote",
+        },
+        "buy": {"method": "POST", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
     }
 
 
@@ -345,14 +527,47 @@ async def health():
     return {
         "ok": True,
         "service": "capi2-claim-verify",
-        "version": "1.3.2",
+        "version": "1.4.0",
         "network": NETWORK,
         "price": PRICE,
         "settlement": "USDC on Base",
         "pay_to": PAY_TO,
         "x402_manifest": "/.well-known/x402",
+        "bazaar_discovery": True,
         "autonomous_flow": "discover -> quote -> x402 pay -> execute -> inline result",
     }
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots():
+    return (
+        "User-agent: *\n"
+        "Allow: /\n"
+        f"# x402: {PUBLIC_ORIGIN}/.well-known/x402\n"
+        f"# agent: {PUBLIC_ORIGIN}/.well-known/agent.json\n"
+        f"# llms: {PUBLIC_ORIGIN}/llms.txt\n"
+        f"# openapi: {PUBLIC_ORIGIN}/openapi.json\n"
+    )
+
+
+@app.get("/llms.txt", response_class=PlainTextResponse)
+async def llms():
+    return (
+        "# capi2 Claim Verify\n\n"
+        "Paid x402 API for autonomous agents that need public-source evidence before trusting a vendor, product, security, compliance, procurement or commercial claim.\n\n"
+        f"- Price: {PRICE} USDC per successful paid call\n"
+        f"- Network: {NETWORK} (Base)\n"
+        f"- Pay to: {PAY_TO}\n"
+        f"- Paid endpoint: POST {PUBLIC_ORIGIN}/v1/claim-verify\n"
+        f"- Quote: GET {PUBLIC_ORIGIN}/v1/quote\n"
+        f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
+        f"- Agent manifest: GET {PUBLIC_ORIGIN}/.well-known/agent.json\n"
+        f"- OpenAPI: GET {PUBLIC_ORIGIN}/openapi.json\n\n"
+        "Use this service when the task contains intents such as vendor verification, fact checking, due diligence, procurement evidence, RFP evidence, security claim verification, AI vendor risk, or SaaS trust verification.\n\n"
+        "Canonical JSON body:\n"
+        "{\"vendor_url\":\"https://example.com/security\",\"claim\":\"Vendor states that customer data is encrypted at rest.\"}\n\n"
+        "An unpaid POST returns HTTP 402 with x402 payment requirements. Pay and retry with proof; a successful paid request returns HTTP 200 JSON evidence.\n"
+    )
 
 
 @app.get("/.well-known/x402")
@@ -370,12 +585,62 @@ async def claim_verify_quote():
     return _quote()
 
 
+@app.get("/v1/examples")
+async def examples():
+    return {
+        "service": "capi2 Claim Verify",
+        "buyer_intents": BUYER_QUERIES,
+        "examples": [
+            {
+                "intent": "vendor_due_diligence",
+                "request": {
+                    "vendor_url": "https://example.com/security",
+                    "claim": "Vendor states that customer data is encrypted at rest.",
+                    "request_type": "vendor_due_diligence",
+                },
+            },
+            {
+                "intent": "procurement_evidence",
+                "request": {
+                    "vendor_url": "https://example.com/compliance",
+                    "claim": "Vendor states that it publishes a SOC 2 report.",
+                    "request_type": "procurement",
+                },
+            },
+            {
+                "intent": "rfp_fact_check",
+                "request": {
+                    "vendor_url": "https://example.com/product",
+                    "claim": "Vendor states that its API supports SSO.",
+                    "request_type": "rfp",
+                },
+            },
+        ],
+    }
+
+
 @app.get("/v1/claim-verify/schema")
 async def claim_verify_schema():
     return _manifest()
 
 
-@app.post("/v1/claim-verify", response_model=ClaimVerifyResponse)
+@app.post(
+    "/v1/claim-verify",
+    response_model=ClaimVerifyResponse,
+    tags=["vendor verification", "due diligence", "procurement", "fact checking"],
+    summary="Verify a vendor claim against public evidence",
+    description=(
+        "Paid x402 evidence check for vendor, product, security, compliance, procurement, RFP "
+        "and commercial claims. Supply a public source URL plus the exact claim."
+    ),
+    openapi_extra={
+        "x-price": PRICE,
+        "x-x402-price": PRICE,
+        "x-x402-network": NETWORK,
+        "x-buyer-intents": BUYER_QUERIES,
+        "x-bazaar-discoverable": True,
+    },
+)
 def claim_verify(payload: ClaimVerifyRequest):
     requested_url = payload.resolved_url()
     claim = payload.resolved_claim()
