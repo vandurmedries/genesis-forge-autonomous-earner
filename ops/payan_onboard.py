@@ -14,6 +14,19 @@ WALLET = "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a"
 PORT = int(os.getenv("PORT", "10000"))
 SCAN_SECONDS = int(os.getenv("CAPI2_REQUEST_SCAN_SECONDS", "60"))
 MAX_BIDS_PER_DAY = int(os.getenv("CAPI2_MAX_BIDS_PER_DAY", "5"))
+PROVIDER_API_KEY = os.getenv("PAYANAGENT_API_KEY")
+PROVIDER_AGENT_ID = os.getenv("PAYANAGENT_AGENT_ID")
+ALLOW_PROVIDER_REGISTRATION = os.getenv("CAPI2_ALLOW_PROVIDER_REGISTRATION", "false").lower() == "true"
+
+COORDINATION_ONLY_PHRASES = (
+    "coordination only",
+    "collaborator discovery only",
+    "separately funded",
+    "no bid is automatically accepted",
+    "not paid through payan",
+    "will carry the reward",
+    "external bounty",
+)
 
 state = {
     "ok": False,
@@ -28,7 +41,7 @@ state = {
     "errors": [],
 }
 
-api_key = None
+api_key = PROVIDER_API_KEY
 bid_request_ids = set()
 fulfilled_request_ids = set()
 bid_day = None
@@ -45,6 +58,16 @@ def auth_headers():
 
 def register_provider():
     global api_key
+    if api_key and PROVIDER_AGENT_ID:
+        state["agentId"] = PROVIDER_AGENT_ID
+        state["apiKeyPrefix"] = "configured"
+        print(f"payan buyer-watch: using configured provider agentId={state['agentId']}", flush=True)
+        return
+    if not ALLOW_PROVIDER_REGISTRATION:
+        raise RuntimeError(
+            "provider_identity_missing:set PAYANAGENT_API_KEY and PAYANAGENT_AGENT_ID; "
+            "automatic registration is disabled to prevent duplicate sellers"
+        )
     payload = {
         "name": "capi2 Deterministic Utility Provider",
         "description": "Automated provider for deterministic SHA-256/SHA-512 hashing, Base64 encode/decode, JWT payload decoding, and canonical JSON fingerprints. Bids only when the request clearly matches one of these capabilities.",
@@ -67,24 +90,59 @@ def register_provider():
 
 
 def detect_capability(title, description):
-    text = f"{title} {description}".lower()
+    title_text = title.lower().strip()
+    description_text = description.lower().strip()
+    text = f"{title_text} {description_text}"
     # Skip obviously unrelated/risky requests even if a keyword collides.
     blocked = ("exploit", "malware", "steal", "password", "credential theft", "bypass auth")
     if any(x in text for x in blocked):
         return None
-    if ("canonical" in text or "canonicalize" in text) and "json" in text:
+    if any(x in text for x in COORDINATION_ONLY_PHRASES):
+        return None
+
+    # Require the requested operation in the title. Descriptions often contain
+    # incidental hashes, benchmarks, or examples that are not the deliverable.
+    if ("canonical" in title_text or "canonicalize" in title_text) and "json" in title_text:
         return "json_canonicalize"
-    if "base64" in text and any(x in text for x in ("decode", "decoding")):
+    if "base64" in title_text and any(x in title_text for x in ("decode", "decoding")):
         return "base64_decode"
-    if "base64" in text and any(x in text for x in ("encode", "encoding")):
+    if "base64" in title_text and any(x in title_text for x in ("encode", "encoding")):
         return "base64_encode"
-    if "jwt" in text and any(x in text for x in ("decode", "inspect", "payload", "header")):
+    if "jwt" in title_text and any(x in title_text for x in ("decode", "inspect", "payload", "header")):
         return "jwt_decode"
-    if "sha512" in text or "sha-512" in text:
+    if "sha512" in title_text or "sha-512" in title_text:
         return "sha512"
-    if "sha256" in text or "sha-256" in text:
+    if "sha256" in title_text or "sha-256" in title_text:
         return "sha256"
     return None
+
+
+def has_solvable_input(req, capability):
+    payload = parse_payload(req.get("inputPayload"))
+    if payload is None:
+        return False
+    try:
+        solve(capability, payload)
+        return True
+    except (ValueError, TypeError, json.JSONDecodeError, base64.binascii.Error):
+        return False
+
+
+def already_bid_remotely(request_id):
+    r = requests.get(f"{BASE}/api/v1/requests/{request_id}", timeout=20)
+    if not r.ok:
+        raise RuntimeError(f"request_detail:{r.status_code}:{r.text[:180]}")
+    bids = r.json().get("bids", [])
+    for bid in bids:
+        bidder_id = bid.get("bidderId")
+        if str(bidder_id) == str(state.get("agentId")):
+            return True
+        if not bidder_id:
+            continue
+        agent = requests.get(f"{BASE}/api/v1/agents/{bidder_id}", timeout=20)
+        if agent.ok and str(agent.json().get("walletAddress", "")).lower() == WALLET.lower():
+            return True
+    return False
 
 
 def bid_message(capability):
@@ -117,6 +175,9 @@ def submit_bid(req, capability):
         return False
     request_id = req.get("_id") or req.get("id")
     if not request_id or request_id in bid_request_ids:
+        return False
+    if already_bid_remotely(request_id):
+        bid_request_ids.add(request_id)
         return False
     budget = int(req.get("budgetMaxCents") or 0)
     if budget < 1:
@@ -256,6 +317,8 @@ def scan_once():
         description = str(req.get("description") or "")
         capability = detect_capability(title, description)
         if not capability:
+            continue
+        if not has_solvable_input(req, capability):
             continue
         request_id = req.get("_id") or req.get("id")
         matches.append({"requestId": request_id, "title": title[:160], "capability": capability, "budgetMaxCents": req.get("budgetMaxCents")})
