@@ -25,7 +25,7 @@ MAX_REDIRECTS = 3
 
 app = FastAPI(
     title="capi2 Claim Verify",
-    version="1.3.1",
+    version="1.3.2",
     description="Agent-discoverable public-evidence vendor claim verification with x402 payment on Base USDC.",
 )
 
@@ -84,7 +84,7 @@ class EvidenceSnippet(BaseModel):
 
 
 class ClaimVerifyResponse(BaseModel):
-    protocol: str = "capi2.claim_verify/1.3.1"
+    protocol: str = "capi2.claim_verify/1.3.2"
     claim_id: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_url: str
@@ -156,7 +156,7 @@ def _validate_public_http_url(url: str) -> None:
 
 def _fetch_public_source(url: str) -> tuple[str, str]:
     current = url
-    headers = {"User-Agent": "capi2-claim-verify/1.3.1 (+public-evidence-check)"}
+    headers = {"User-Agent": "capi2-claim-verify/1.3.2 (+public-evidence-check)"}
 
     for _ in range(MAX_REDIRECTS + 1):
         _validate_public_http_url(current)
@@ -206,12 +206,17 @@ def _fetch_public_source(url: str) -> tuple[str, str]:
     raise HTTPException(status_code=422, detail="too_many_source_redirects")
 
 
+def _price_usd() -> float:
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)", PRICE)
+    return float(match.group(1)) if match else 0.01
+
+
 def _lifecycle() -> list[dict]:
     return [
         {
             "step": "discover",
             "method": "GET",
-            "path": "/.well-known/agent.json",
+            "paths": ["/.well-known/x402", "/.well-known/agent.json", "/openapi.json"],
             "payment_required": False,
         },
         {
@@ -237,7 +242,6 @@ def _lifecycle() -> list[dict]:
             "mode": "inline",
             "success_status": 200,
             "content_type": "application/json",
-            "behavior": "The paid request returns the machine-readable result directly in the successful response.",
         },
     ]
 
@@ -265,18 +269,50 @@ def _quote() -> dict:
         "marketplace": {
             "standard_fee_bps": 1000,
             "provider_share_bps": 9000,
-            "note": "The 10/90 split applies to routed third-party marketplace jobs after successful delivery and provider payout onboarding; this first-party capi2 Claim Verify service settles to the configured capi2 pay_to address.",
+            "note": "The 10/90 split applies to routed third-party marketplace jobs; this first-party service settles to the configured capi2 pay_to address.",
         },
+    }
+
+
+def _x402_manifest() -> dict:
+    return {
+        "name": "capi2 Claim Verify",
+        "description": "Paid public-evidence vendor claim verification for autonomous agents.",
+        "homepage": "https://capi2-claim-verify.onrender.com",
+        "protocol": "x402",
+        "network": NETWORK,
+        "asset": "USDC",
+        "payTo": PAY_TO,
+        "resources": [
+            {
+                "name": "capi2 Claim Verify",
+                "endpoint": "POST /v1/claim-verify",
+                "method": "POST",
+                "price_usd": _price_usd(),
+                "summary": "Verify one public vendor claim against a supplied public source URL and return machine-readable evidence.",
+            }
+        ],
+        "free_endpoints": [
+            "/health",
+            "/.well-known/x402",
+            "/.well-known/agent.json",
+            "/openapi.json",
+            "/v1/quote",
+            "/v1/claim-verify/schema",
+        ],
     }
 
 
 def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "protocol": "capi2.claim_verify/1.3.1",
+        "protocol": "capi2.claim_verify/1.3.2",
         "description": "Verify a public vendor claim against a supplied public source URL.",
-        "discovery": "/.well-known/agent.json",
-        "openapi": "/openapi.json",
+        "discovery": {
+            "x402": "/.well-known/x402",
+            "agent": "/.well-known/agent.json",
+            "openapi": "/openapi.json",
+        },
         "quote": {"method": "GET", "path": "/v1/quote"},
         "endpoint": {"method": "POST", "path": "/v1/claim-verify"},
         "lifecycle": _lifecycle(),
@@ -309,13 +345,19 @@ async def health():
     return {
         "ok": True,
         "service": "capi2-claim-verify",
-        "version": "1.3.1",
+        "version": "1.3.2",
         "network": NETWORK,
         "price": PRICE,
         "settlement": "USDC on Base",
         "pay_to": PAY_TO,
+        "x402_manifest": "/.well-known/x402",
         "autonomous_flow": "discover -> quote -> x402 pay -> execute -> inline result",
     }
+
+
+@app.get("/.well-known/x402")
+async def x402_manifest():
+    return _x402_manifest()
 
 
 @app.get("/.well-known/agent.json")
