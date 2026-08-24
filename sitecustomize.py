@@ -3,8 +3,10 @@
 When this file is on PYTHONPATH it:
 1. Mirrors the canonical x402 v2 PaymentRequired object into empty API 402 JSON
    bodies while preserving the SDK-generated PAYMENT-REQUIRED header.
-2. Adds a temporary .well-known route used for 402 Index domain verification.
-3. Can run explicitly gated, one-shot free directory actions.
+2. Enriches FastAPI OpenAPI with agent-friendly payment discovery metadata used
+   by x402scan-style crawlers (`info.x-guidance`, contact, `x-payment-info`, 402).
+3. Adds a temporary .well-known route used for 402 Index domain verification.
+4. Can run explicitly gated, one-shot free directory actions.
 
 CAPI2_DIRECTORY_DISTRIBUTE modes:
 - all/true: submit to 402 Index and Market402
@@ -24,7 +26,7 @@ import urllib.error
 import urllib.request
 
 
-def _install_402index_verify_route() -> None:
+def _install_fastapi_discovery_support() -> None:
     try:
         from fastapi import FastAPI
         from fastapi.responses import PlainTextResponse
@@ -32,7 +34,7 @@ def _install_402index_verify_route() -> None:
         return
 
     original = FastAPI.__init__
-    if getattr(original, "_capi2_402index_route", False):
+    if getattr(original, "_capi2_discovery_support", False):
         return
 
     def patched(self, *args, **kwargs):
@@ -52,7 +54,67 @@ def _install_402index_verify_route() -> None:
             response_class=PlainTextResponse,
         )
 
-    patched._capi2_402index_route = True
+        original_openapi = self.openapi
+
+        def enhanced_openapi():
+            if self.openapi_schema is not None:
+                return self.openapi_schema
+
+            schema = original_openapi()
+            title = str(getattr(self, "title", ""))
+            paid_paths: list[str] = []
+            amount = None
+            guidance = None
+
+            if "Claim Verify" in title:
+                paid_paths = ["/v1/claim-verify"]
+                amount = os.getenv("CAPI2_CLAIM_VERIFY_PRICE", "$0.01").lstrip("$")
+                guidance = (
+                    "Use POST /v1/claim-verify when an agent needs evidence-backed vendor, product, "
+                    "security, compliance, procurement, RFP or commercial claim verification. Send a "
+                    "public vendor_url plus the exact claim. An unpaid call returns an x402 v2 402; "
+                    "pay USDC on Base and retry to receive machine-readable evidence, verdict and confidence."
+                )
+            elif "Agent Utilities" in title or "Demand Microtools" in title:
+                paid_paths = [
+                    "/v1/hash/sha256",
+                    "/v1/hash/sha512",
+                    "/v1/base64/encode",
+                    "/v1/base64/decode",
+                    "/v1/jwt/decode",
+                    "/v1/json/canonicalize",
+                ]
+                amount = os.getenv("CAPI2_DEMAND_TOOL_PRICE", "$0.001").lstrip("$")
+                guidance = (
+                    "Use the POST utility routes for SHA-256/SHA-512 checksums, Base64 encode/decode, "
+                    "JWT inspection, or deterministic JSON canonicalization. Each route has a JSON input "
+                    "schema. An unpaid call returns an x402 v2 402; pay USDC on Base and retry for the result."
+                )
+
+            if paid_paths and amount and guidance:
+                info = schema.setdefault("info", {})
+                info["x-guidance"] = guidance
+                contact = info.setdefault("contact", {})
+                contact["email"] = "capi2@agentmail.to"
+
+                for path in paid_paths:
+                    operation = schema.get("paths", {}).get(path, {}).get("post")
+                    if not isinstance(operation, dict):
+                        continue
+                    operation["x-payment-info"] = {
+                        "price": {"mode": "fixed", "currency": "USD", "amount": str(amount)},
+                        "protocols": [{"x402": {}}],
+                    }
+                    responses = operation.setdefault("responses", {})
+                    responses.setdefault("402", {"description": "Payment Required"})
+
+                self.openapi_schema = schema
+
+            return schema
+
+        self.openapi = enhanced_openapi
+
+    patched._capi2_discovery_support = True
     FastAPI.__init__ = patched
 
 
@@ -62,8 +124,6 @@ def _install_x402_body_mirror() -> None:
     try:
         from x402.http.x402_http_server_base import x402HTTPServerBase
     except Exception as exc:
-        # During Render's dependency-install phase x402 may not exist yet. Runtime
-        # imports sitecustomize again after the venv is ready, where this succeeds.
         print(f"x402-body-mirror: unavailable {type(exc).__name__}: {exc}", flush=True)
         return
 
@@ -72,14 +132,7 @@ def _install_x402_body_mirror() -> None:
         return
 
     def wrapped(self, payment_required, is_web_browser, paywall_config=None, custom_html=None, unpaid_response=None):
-        response = original(
-            self,
-            payment_required,
-            is_web_browser,
-            paywall_config,
-            custom_html,
-            unpaid_response,
-        )
+        response = original(self, payment_required, is_web_browser, paywall_config, custom_html, unpaid_response)
         if response.status == 402 and not is_web_browser and (response.body is None or response.body == {}):
             try:
                 if hasattr(payment_required, "model_dump"):
@@ -95,7 +148,7 @@ def _install_x402_body_mirror() -> None:
     print("x402-body-mirror: installed", flush=True)
 
 
-_install_402index_verify_route()
+_install_fastapi_discovery_support()
 _install_x402_body_mirror()
 
 
@@ -113,7 +166,7 @@ def _post_json(url: str, payload: dict, label: str, *, redact: bool = False) -> 
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/1.2"},
+        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/1.3"},
         method="POST",
     )
     try:
@@ -176,8 +229,6 @@ def _claim_402index_domain(domain: str) -> None:
         print(f"directory-distribution 402index-claim {domain}: invalid response {type(exc).__name__}", flush=True)
         return
 
-    # The .well-known FastAPI route reads this dynamically from the process env.
-    # The raw verification token is deliberately not logged or persisted.
     os.environ["CAPI2_402INDEX_VERIFY_HASH"] = verification_hash
     time.sleep(2)
 
@@ -189,16 +240,12 @@ def _claim_402index_domain(domain: str) -> None:
     if verify_status == 200:
         try:
             result = json.loads(verify_body)
-            print(
-                f"directory-distribution 402index-domain-verified: domain={domain} services_count={result.get('services_count')}",
-                flush=True,
-            )
+            print(f"directory-distribution 402index-domain-verified: domain={domain} services_count={result.get('services_count')}", flush=True)
         except Exception:
             pass
 
 
 def _run_distribution(mode: str) -> None:
-    # Let the production server bind before any external verifier fetches .well-known.
     time.sleep(20)
     print(f"directory-distribution: starting one-shot mode={mode}", flush=True)
     if mode in {"true", "all"}:
