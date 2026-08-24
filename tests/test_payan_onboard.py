@@ -25,6 +25,14 @@ class CapabilityMatchingTests(unittest.TestCase):
             "sha256",
         )
 
+    def test_catalog_health_bounty_matches_without_input(self):
+        capability = payan.detect_capability(
+            "Build a catalog endpoint-health checker (find dead ecosystem sellers)",
+            "Probe top offers without paid calls.",
+        )
+        self.assertEqual(capability, "catalog_health")
+        self.assertTrue(payan.has_solvable_input({}, capability))
+
     def test_coordination_request_is_blocked(self):
         self.assertIsNone(
             payan.detect_capability(
