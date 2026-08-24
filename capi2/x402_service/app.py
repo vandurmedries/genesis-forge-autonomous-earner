@@ -2,6 +2,8 @@ import ipaddress
 import os
 import re
 import socket
+import threading
+import time
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -11,7 +13,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
-from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
@@ -23,6 +24,7 @@ NETWORK = os.getenv("CAPI2_X402_NETWORK", "eip155:8453")
 FACILITATOR_URL = os.getenv("CAPI2_X402_FACILITATOR", "https://facilitator.payai.network")
 PRICE = os.getenv("CAPI2_CLAIM_VERIFY_PRICE", "$0.01")
 PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-verify.onrender.com").rstrip("/")
+AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "true"
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
 MAX_REDIRECTS = 3
 
@@ -59,7 +61,7 @@ CLAIM_INPUT_SCHEMA = {
 }
 
 CLAIM_OUTPUT_EXAMPLE = {
-    "protocol": "capi2.claim_verify/1.4.0",
+    "protocol": "capi2.claim_verify/1.4.1",
     "vendor_url": "https://example.com/security",
     "claim": "Vendor states that customer data is encrypted at rest.",
     "verification_status": "supported",
@@ -104,9 +106,59 @@ CLAIM_OUTPUT_SCHEMA = {
     ],
 }
 
+
+def _bazaar_claim_extension() -> dict:
+    output_example_schema = {"type": "object"}
+    output_example_schema.update(CLAIM_OUTPUT_SCHEMA)
+    return {
+        "bazaar": {
+            "info": {
+                "input": {
+                    "type": "http",
+                    "method": "POST",
+                    "bodyType": "json",
+                    "body": {
+                        "vendor_url": "https://example.com/security",
+                        "claim": "Vendor states that customer data is encrypted at rest.",
+                        "vendor_name": "Example Vendor",
+                        "request_type": "vendor_due_diligence",
+                    },
+                },
+                "output": {"type": "json", "example": CLAIM_OUTPUT_EXAMPLE},
+            },
+            "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "http"},
+                            "method": {"type": "string", "enum": ["POST", "PUT", "PATCH"]},
+                            "bodyType": {"type": "string", "enum": ["json", "form-data", "text"]},
+                            "body": CLAIM_INPUT_SCHEMA,
+                        },
+                        "required": ["type", "method", "bodyType", "body"],
+                        "additionalProperties": False,
+                    },
+                    "output": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string"},
+                            "example": output_example_schema,
+                        },
+                        "required": ["type"],
+                    },
+                },
+                "required": ["input"],
+            },
+        }
+    }
+
+
 app = FastAPI(
     title="capi2 Claim Verify",
-    version="1.4.0",
+    version="1.4.1",
     description=(
         "Agent-discoverable paid public-evidence verification for vendor, procurement, "
         "due-diligence, RFP, security and commercial claims using x402 on Base USDC."
@@ -136,17 +188,7 @@ routes = {
         ),
         service_name="capi2 Claim Verify",
         tags=BUYER_TAGS,
-        extensions=declare_discovery_extension(
-            input={
-                "vendor_url": "https://example.com/security",
-                "claim": "Vendor states that customer data is encrypted at rest.",
-                "vendor_name": "Example Vendor",
-                "request_type": "vendor_due_diligence",
-            },
-            input_schema=CLAIM_INPUT_SCHEMA,
-            body_type="json",
-            output=OutputConfig(example=CLAIM_OUTPUT_EXAMPLE, schema=CLAIM_OUTPUT_SCHEMA),
-        ),
+        extensions=_bazaar_claim_extension(),
     )
 }
 
@@ -186,7 +228,7 @@ class EvidenceSnippet(BaseModel):
 
 
 class ClaimVerifyResponse(BaseModel):
-    protocol: str = "capi2.claim_verify/1.4.0"
+    protocol: str = "capi2.claim_verify/1.4.1"
     claim_id: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_url: str
@@ -258,7 +300,7 @@ def _validate_public_http_url(url: str) -> None:
 
 def _fetch_public_source(url: str) -> tuple[str, str]:
     current = url
-    headers = {"User-Agent": "capi2-claim-verify/1.4.0 (+public-evidence-check)"}
+    headers = {"User-Agent": "capi2-claim-verify/1.4.1 (+public-evidence-check)"}
 
     for _ in range(MAX_REDIRECTS + 1):
         _validate_public_http_url(current)
@@ -450,7 +492,7 @@ def _x402_manifest() -> dict:
 def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "protocol": "capi2.claim_verify/1.4.0",
+        "protocol": "capi2.claim_verify/1.4.1",
         "description": (
             "Evidence-backed public-source claim verification for AI agents performing vendor "
             "risk, due diligence, procurement, RFP, security and commercial workflows."
@@ -527,7 +569,7 @@ async def health():
     return {
         "ok": True,
         "service": "capi2-claim-verify",
-        "version": "1.4.0",
+        "version": "1.4.1",
         "network": NETWORK,
         "price": PRICE,
         "settlement": "USDC on Base",
@@ -708,3 +750,25 @@ def claim_verify(payload: ClaimVerifyRequest):
             "Regulated or high-impact decisions require independent review by an appropriately authorized party.",
         ],
     )
+
+
+def register_agent402_later() -> None:
+    if not AGENT402_REGISTER:
+        return
+    time.sleep(15)
+    try:
+        response = requests.post(
+            "https://agent402.tools/api/index/register",
+            json={"origin": PUBLIC_ORIGIN},
+            timeout=20,
+            headers={"user-agent": "capi2-claim-verify/1.4.1"},
+        )
+        body = response.json() if "application/json" in response.headers.get("content-type", "") else {"text": response.text[:500]}
+        print(f"agent402 registration: status={response.status_code} listed={body.get('listed')} seller={body.get('seller')}")
+    except Exception as exc:
+        print(f"agent402 registration deferred: {exc.__class__.__name__}: {exc}")
+
+
+@app.on_event("startup")
+def startup() -> None:
+    threading.Thread(target=register_agent402_later, daemon=True).start()
