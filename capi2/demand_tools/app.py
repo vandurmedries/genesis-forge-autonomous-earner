@@ -12,7 +12,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
@@ -28,7 +27,7 @@ AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "tru
 
 app = FastAPI(
     title="capi2 Agent Utilities",
-    version="1.1.0",
+    version="1.1.1",
     description=(
         "Ultra-low-cost x402 utilities for autonomous agents: hashing, checksums, Base64, "
         "JWT inspection and deterministic JSON canonicalization."
@@ -72,6 +71,56 @@ BUYER_QUERIES = [
 ]
 
 
+def bazaar_body_extension(
+    input_example: dict[str, Any],
+    input_schema: dict[str, Any],
+    output_example: dict[str, Any],
+) -> dict[str, Any]:
+    """Emit the x402 Bazaar POST discovery shape without optional runtime dependencies."""
+    return {
+        "bazaar": {
+            "info": {
+                "input": {
+                    "type": "http",
+                    "method": "POST",
+                    "bodyType": "json",
+                    "body": input_example,
+                },
+                "output": {
+                    "type": "json",
+                    "example": output_example,
+                },
+            },
+            "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "http"},
+                            "method": {"type": "string", "enum": ["POST", "PUT", "PATCH"]},
+                            "bodyType": {"type": "string", "enum": ["json", "form-data", "text"]},
+                            "body": input_schema,
+                        },
+                        "required": ["type", "method", "bodyType", "body"],
+                        "additionalProperties": False,
+                    },
+                    "output": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string"},
+                            "example": {"type": "object"},
+                        },
+                        "required": ["type"],
+                    },
+                },
+                "required": ["input"],
+            },
+        }
+    }
+
+
 def paid(
     path: str,
     service_name: str,
@@ -95,12 +144,7 @@ def paid(
         description=description,
         service_name=service_name,
         tags=tags,
-        extensions=declare_discovery_extension(
-            input=input_example,
-            input_schema=input_schema,
-            body_type="json",
-            output=OutputConfig(example=output_example),
-        ),
+        extensions=bazaar_body_extension(input_example, input_schema, output_example),
     )
 
 
@@ -297,7 +341,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "capi2-demand-tools",
-        "version": "1.1.0",
+        "version": "1.1.1",
         "network": NETWORK,
         "asset": "USDC",
         "price_per_tool": MICRO_PRICE,
@@ -375,7 +419,7 @@ def x402_manifest() -> dict[str, Any]:
 def agent_manifest() -> dict[str, Any]:
     return {
         "name": "capi2 Agent Utilities",
-        "protocol": "capi2.demand-tools/1.1",
+        "protocol": "capi2.demand-tools/1.1.1",
         "description": "Deterministic micro-APIs priced for autonomous agent purchasing.",
         "buyer_queries": BUYER_QUERIES,
         "discovery": {
@@ -528,7 +572,7 @@ def register_agent402_later() -> None:
             "https://agent402.tools/api/index/register",
             json={"origin": PUBLIC_ORIGIN},
             timeout=20,
-            headers={"user-agent": "capi2-demand-tools/1.1"},
+            headers={"user-agent": "capi2-demand-tools/1.1.1"},
         )
         body = response.json() if "application/json" in response.headers.get("content-type", "") else {"text": response.text[:500]}
         print(f"agent402 registration: status={response.status_code} listed={body.get('listed')} seller={body.get('seller')}")
