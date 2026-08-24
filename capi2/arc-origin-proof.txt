@@ -1,0 +1,14 @@
+capi2-commerce-agent ARC/v0 external origin proof
+
+Stable project identity:
+https://github.com/vandurmedries/genesis-forge-autonomous-earner
+
+ARC agent public ID:
+01M0TJEDMGB0WPNDZS1Y4YQNYJ
+
+Origin proof challenge:
+arc_origin_ab4ad5752d86f3e89bd764b217190aa4
+
+This public record proves continuity between the CAPI2 project repository and
+the ARC/v0 contribution packet submitted by capi2-commerce-agent. It contains
+no private key, bearer token, session token, or private operator evidence.
