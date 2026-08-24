@@ -1,20 +1,14 @@
 """capi2 x402 runtime compatibility and one-shot directory distribution.
 
-When this file is on PYTHONPATH it:
-1. Mirrors the canonical x402 v2 PaymentRequired object into empty API 402 JSON
-   bodies while preserving the SDK-generated PAYMENT-REQUIRED header.
-2. Enriches FastAPI OpenAPI with agent-friendly payment discovery metadata used
-   by x402scan-style crawlers (`info.x-guidance`, contact, `x-payment-info`, 402).
-3. Adds a temporary .well-known route used for 402 Index domain verification.
-4. Can run explicitly gated, one-shot free directory actions.
+Loaded when the repo root is on PYTHONPATH. It:
+- mirrors canonical x402 v2 PaymentRequired into API 402 JSON bodies while preserving PAYMENT-REQUIRED;
+- enriches FastAPI OpenAPI with x402scan-style discovery metadata;
+- exposes a temporary 402 Index domain-verification route;
+- runs explicitly gated one-shot free directory submissions/claims.
 
-CAPI2_DIRECTORY_DISTRIBUTE modes:
-- all/true: submit to 402 Index and Market402
-- market402: submit only to Market402
-- 402claim: claim and verify the current Render service hostname on 402 Index
-No payment is ever attempted by this hook.
+CAPI2_DIRECTORY_DISTRIBUTE modes: false, all/true, market402, 402claim.
+No payment is attempted by this hook.
 """
-
 from __future__ import annotations
 
 import json
@@ -62,54 +56,45 @@ def _install_fastapi_discovery_support() -> None:
 
             schema = original_openapi()
             title = str(getattr(self, "title", ""))
-            paid_paths: list[str] = []
-            amount = None
             guidance = None
-
             if "Claim Verify" in title:
-                paid_paths = ["/v1/claim-verify"]
-                amount = os.getenv("CAPI2_CLAIM_VERIFY_PRICE", "$0.01").lstrip("$")
                 guidance = (
-                    "Use POST /v1/claim-verify when an agent needs evidence-backed vendor, product, "
-                    "security, compliance, procurement, RFP or commercial claim verification. Send a "
-                    "public vendor_url plus the exact claim. An unpaid call returns an x402 v2 402; "
-                    "pay USDC on Base and retry to receive machine-readable evidence, verdict and confidence."
+                    "Use POST /v1/claim-verify for evidence-backed vendor/product/security/procurement "
+                    "claim verification. Send a public vendor_url and exact claim. Unpaid calls return "
+                    "x402 v2 402; pay USDC on Base and retry for evidence, verdict and confidence."
                 )
             elif "Agent Utilities" in title or "Demand Microtools" in title:
-                paid_paths = [
-                    "/v1/hash/sha256",
-                    "/v1/hash/sha512",
-                    "/v1/base64/encode",
-                    "/v1/base64/decode",
-                    "/v1/jwt/decode",
-                    "/v1/json/canonicalize",
-                ]
-                amount = os.getenv("CAPI2_DEMAND_TOOL_PRICE", "$0.001").lstrip("$")
                 guidance = (
-                    "Use the POST utility routes for SHA-256/SHA-512 checksums, Base64 encode/decode, "
-                    "JWT inspection, or deterministic JSON canonicalization. Each route has a JSON input "
-                    "schema. An unpaid call returns an x402 v2 402; pay USDC on Base and retry for the result."
+                    "Use the paid POST routes for live public web/API lookup, DNS/RDAP/TLS domain "
+                    "intelligence, API/OpenAPI discovery audits, evidence extraction, x402 seller health, "
+                    "or deterministic hashing/encoding/JWT/JSON utilities. Each operation publishes its "
+                    "own x402 price and input schema. Private/reserved network targets are blocked."
                 )
 
-            if paid_paths and amount and guidance:
+            if guidance:
                 info = schema.setdefault("info", {})
                 info["x-guidance"] = guidance
-                contact = info.setdefault("contact", {})
-                contact["email"] = "capi2@agentmail.to"
+                info.setdefault("contact", {})["email"] = "capi2@agentmail.to"
 
-                for path in paid_paths:
-                    operation = schema.get("paths", {}).get(path, {}).get("post")
+                for path_item in schema.get("paths", {}).values():
+                    if not isinstance(path_item, dict):
+                        continue
+                    operation = path_item.get("post")
                     if not isinstance(operation, dict):
                         continue
+                    raw_price = operation.get("x-x402-price") or operation.get("x-price")
+                    if not raw_price:
+                        continue
+                    amount = str(raw_price).lstrip("$")
                     operation["x-payment-info"] = {
-                        "price": {"mode": "fixed", "currency": "USD", "amount": str(amount)},
+                        "price": {"mode": "fixed", "currency": "USD", "amount": amount},
                         "protocols": [{"x402": {}}],
                     }
-                    responses = operation.setdefault("responses", {})
-                    responses.setdefault("402", {"description": "Payment Required"})
+                    operation.setdefault("responses", {}).setdefault(
+                        "402", {"description": "Payment Required"}
+                    )
 
                 self.openapi_schema = schema
-
             return schema
 
         self.openapi = enhanced_openapi
@@ -166,7 +151,7 @@ def _post_json(url: str, payload: dict, label: str, *, redact: bool = False) -> 
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/1.3"},
+        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/2.0"},
         method="POST",
     )
     try:
@@ -186,24 +171,61 @@ def _post_json(url: str, payload: dict, label: str, *, redact: bool = False) -> 
 
 
 def _registrations() -> list[dict]:
-    return [
-        {"url": "https://capi2-claim-verify.onrender.com/v1/claim-verify", "name": "capi2 Claim Verify", "probe": {"vendor_url": "https://example.com/security", "claim": "Vendor states that customer data is encrypted at rest."}, "description": "Evidence-backed vendor claim verification for AI agents, procurement, due diligence, RFP and security workflows.", "price": 0.01, "category": "ai/vendor-risk"},
-        {"url": "https://capi2-demand-tools.onrender.com/v1/hash/sha256", "name": "capi2 SHA-256", "probe": {"text": "hello agent"}, "description": "Low-cost SHA-256 checksum and digest utility for autonomous agents.", "price": 0.001, "category": "developer-tools/hashing"},
-        {"url": "https://capi2-demand-tools.onrender.com/v1/hash/sha512", "name": "capi2 SHA-512", "probe": {"text": "hello agent"}, "description": "Low-cost SHA-512 checksum and digest utility for autonomous agents.", "price": 0.001, "category": "developer-tools/hashing"},
-        {"url": "https://capi2-demand-tools.onrender.com/v1/base64/encode", "name": "capi2 Base64 Encode", "probe": {"text": "hello agent"}, "description": "Low-cost Base64 encoding utility for API payloads and autonomous-agent workflows.", "price": 0.001, "category": "developer-tools/encoding"},
-        {"url": "https://capi2-demand-tools.onrender.com/v1/base64/decode", "name": "capi2 Base64 Decode", "probe": {"data": "aGVsbG8gYWdlbnQ=", "urlsafe": False}, "description": "Low-cost Base64 and Base64URL decoding utility for autonomous-agent workflows.", "price": 0.001, "category": "developer-tools/encoding"},
-        {"url": "https://capi2-demand-tools.onrender.com/v1/jwt/decode", "name": "capi2 JWT Decode", "probe": {"token": "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjMifQ."}, "description": "Low-cost JWT header and claims decoding for token inspection and debugging; no signature verification.", "price": 0.001, "category": "developer-tools/auth"},
-        {"url": "https://capi2-demand-tools.onrender.com/v1/json/canonicalize", "name": "capi2 JSON Canonical", "probe": {"value": {"b": 2, "a": 1}}, "description": "Low-cost deterministic JSON canonicalization for stable hashing, signing and comparison.", "price": 0.001, "category": "developer-tools/json"},
+    demand = "https://capi2-demand-tools.onrender.com"
+    rows = [
+        {"url": "https://capi2-claim-verify.onrender.com/v1/claim-verify", "name": "capi2 Claim Verify",
+         "probe": {"vendor_url": "https://example.com/security", "claim": "Vendor states that customer data is encrypted at rest."},
+         "description": "Evidence-backed vendor claim verification for AI agents and procurement workflows.",
+         "price": 0.01, "category": "ai/vendor-risk"},
+        {"url": f"{demand}/v1/web/lookup", "name": "capi2 Live Web Lookup",
+         "probe": {"url": "https://example.com", "query": "example domain"},
+         "description": "Live public web/API lookup with structured metadata and relevant passages.",
+         "price": 0.01, "category": "data/web"},
+        {"url": f"{demand}/v1/domain/intelligence", "name": "capi2 Domain Intelligence",
+         "probe": {"domain": "example.com", "include_rdap": True},
+         "description": "DNS, RDAP, HTTPS and TLS intelligence for public domains.",
+         "price": 0.01, "category": "data/domain"},
+        {"url": f"{demand}/v1/api/audit", "name": "capi2 API Discovery Audit",
+         "probe": {"url": "https://capi2-demand-tools.onrender.com"},
+         "description": "Audit OpenAPI, x402, agent manifests, robots, llms and health discovery.",
+         "price": 0.01, "category": "developer-tools/api-audit"},
+        {"url": f"{demand}/v1/evidence/extract", "name": "capi2 Evidence Extract",
+         "probe": {"url": "https://example.com", "query": "example domain", "max_passages": 5},
+         "description": "Extract and rank relevant evidence passages from a public webpage.",
+         "price": 0.01, "category": "data/evidence"},
+        {"url": f"{demand}/v1/x402/health", "name": "capi2 Agent x402 Health",
+         "probe": {"url": "https://capi2-demand-tools.onrender.com/v1/web/lookup"},
+         "description": "x402 and agent seller discovery/health audit without attaching payment.",
+         "price": 0.01, "category": "developer-tools/x402"},
+        {"url": f"{demand}/v1/hash/sha256", "name": "capi2 SHA-256",
+         "probe": {"text": "hello agent"}, "description": "Low-cost SHA-256 checksum utility.",
+         "price": 0.001, "category": "developer-tools/hashing"},
+        {"url": f"{demand}/v1/hash/sha512", "name": "capi2 SHA-512",
+         "probe": {"text": "hello agent"}, "description": "Low-cost SHA-512 checksum utility.",
+         "price": 0.001, "category": "developer-tools/hashing"},
+        {"url": f"{demand}/v1/base64/encode", "name": "capi2 Base64 Encode",
+         "probe": {"text": "hello agent"}, "description": "Low-cost Base64 encoding utility.",
+         "price": 0.001, "category": "developer-tools/encoding"},
+        {"url": f"{demand}/v1/base64/decode", "name": "capi2 Base64 Decode",
+         "probe": {"data": "aGVsbG8gYWdlbnQ=", "urlsafe": False}, "description": "Low-cost Base64 decoding utility.",
+         "price": 0.001, "category": "developer-tools/encoding"},
+        {"url": f"{demand}/v1/jwt/decode", "name": "capi2 JWT Decode",
+         "probe": {"token": "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjMifQ."}, "description": "JWT claims inspection without verification.",
+         "price": 0.001, "category": "developer-tools/auth"},
+        {"url": f"{demand}/v1/json/canonicalize", "name": "capi2 JSON Canonical",
+         "probe": {"value": {"b": 2, "a": 1}}, "description": "Deterministic JSON canonicalization.",
+         "price": 0.001, "category": "developer-tools/json"},
     ]
+    return rows
 
 
 def _submit_402index() -> None:
     for item in _registrations():
         payload = {
             "url": item["url"], "name": item["name"], "protocol": "x402", "http_method": "POST",
-            "probe_body": json.dumps(item["probe"]), "description": item["description"], "price_usd": item["price"],
-            "payment_asset": "USDC", "payment_network": "Base", "category": item["category"],
-            "provider": "capi2", "contact_email": "capi2@agentmail.to",
+            "probe_body": json.dumps(item["probe"]), "description": item["description"],
+            "price_usd": item["price"], "payment_asset": "USDC", "payment_network": "Base",
+            "category": item["category"], "provider": "capi2", "contact_email": "capi2@agentmail.to",
         }
         _post_json("https://402index.io/api/v1/register", payload, f"402index {item['name']}")
 
@@ -223,15 +245,13 @@ def _claim_402index_domain(domain: str) -> None:
     if status not in {200, 201}:
         return
     try:
-        result = json.loads(body)
-        verification_hash = str(result["verification_hash"]).strip()
+        verification_hash = str(json.loads(body)["verification_hash"]).strip()
     except Exception as exc:
         print(f"directory-distribution 402index-claim {domain}: invalid response {type(exc).__name__}", flush=True)
         return
 
     os.environ["CAPI2_402INDEX_VERIFY_HASH"] = verification_hash
     time.sleep(2)
-
     verify_status, verify_body = _post_json(
         "https://402index.io/api/v1/claim/verify",
         {"domain": domain},
@@ -240,7 +260,10 @@ def _claim_402index_domain(domain: str) -> None:
     if verify_status == 200:
         try:
             result = json.loads(verify_body)
-            print(f"directory-distribution 402index-domain-verified: domain={domain} services_count={result.get('services_count')}", flush=True)
+            print(
+                f"directory-distribution 402index-domain-verified: domain={domain} services_count={result.get('services_count')}",
+                flush=True,
+            )
         except Exception:
             pass
 
