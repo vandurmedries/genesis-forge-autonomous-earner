@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "capi2 A2A Transaction Envelope",
+  "type": "object",
+  "required": ["protocol", "transaction_id", "created_at", "status", "request", "routing"],
+  "properties": {
+    "protocol": {"const": "capi2.transaction/0.1"},
+    "transaction_id": {"type": "string", "format": "uuid"},
+    "external_id": {"type": ["string", "null"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": ["string", "null"], "format": "date-time"},
+    "status": {
+      "enum": ["REQUESTED", "ROUTED", "QUOTED", "PAYMENT_REQUIRED", "AUTHORIZED", "EXECUTING", "DELIVERED", "ACCEPTED", "SETTLED", "FAILED", "DISPUTED", "REVERSED", "CANCELLED", "LICENSED_PROVIDER_REQUIRED"]
+    },
+    "request": {
+      "type": "object",
+      "required": ["capability"],
+      "properties": {
+        "capability": {"type": "string"},
+        "requested_action": {"type": ["string", "null"]},
+        "input": {"type": ["object", "null"]}
+      }
+    },
+    "routing": {
+      "type": "object",
+      "required": ["decision"],
+      "properties": {
+        "decision": {"enum": ["pending", "matched", "no_active_match", "licensed_provider_required"]},
+        "service_id": {"type": ["string", "null"]},
+        "provider_id": {"type": ["string", "null"]},
+        "quote_url": {"type": ["string", "null"], "format": "uri"},
+        "execute_url": {"type": ["string", "null"], "format": "uri"}
+      }
+    },
+    "quote": {
+      "type": ["object", "null"],
+      "properties": {
+        "price": {"type": ["string", "number", "null"]},
+        "asset": {"type": ["string", "null"]},
+        "payment_protocol": {"type": ["string", "null"]}
+      }
+    },
+    "result": {
+      "type": ["object", "null"],
+      "properties": {
+        "mode": {"type": ["string", "null"]},
+        "reference": {"type": ["string", "null"]},
+        "payload": {"type": ["object", "null"]}
+      }
+    },
+    "exception": {
+      "type": ["object", "null"],
+      "properties": {
+        "code": {"type": ["string", "null"]},
+        "message": {"type": ["string", "null"]},
+        "next_step": {"type": ["string", "null"]}
+      }
+    },
+    "extensions": {"type": "object"}
+  }
+}
