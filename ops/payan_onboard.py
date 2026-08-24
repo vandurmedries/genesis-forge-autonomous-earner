@@ -1,117 +1,293 @@
+import base64
+import hashlib
 import json
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
 
 BASE = "https://payanagent.com"
 WALLET = "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a"
-DEMAND_ORIGIN = "https://capi2-demand-tools.onrender.com"
-CLAIM_ORIGIN = "https://capi2-claim-verify.onrender.com"
 PORT = int(os.getenv("PORT", "10000"))
+SCAN_SECONDS = int(os.getenv("CAPI2_REQUEST_SCAN_SECONDS", "60"))
+MAX_BIDS_PER_DAY = int(os.getenv("CAPI2_MAX_BIDS_PER_DAY", "5"))
 
-OFFERS = [
-    ("capi2 · SHA-256 Hash", "Low-latency SHA-256 digest for UTF-8 text. Deterministic x402 microtool for integrity, cache keys and deduplication.", "Developer Tools", ["sha256", "hash", "digest", "x402", "agent-tools"], f"{DEMAND_ORIGIN}/v1/hash/sha256", {"text": "hello"}),
-    ("capi2 · SHA-512 Hash", "Low-latency SHA-512 digest for UTF-8 text. Deterministic x402 microtool for integrity workflows.", "Developer Tools", ["sha512", "hash", "digest", "x402", "agent-tools"], f"{DEMAND_ORIGIN}/v1/hash/sha512", {"text": "hello"}),
-    ("capi2 · Base64 Encode", "Encode UTF-8 text to Base64 for API payloads and agent interoperability.", "Developer Tools", ["base64", "encode", "encoding", "x402", "agent-tools"], f"{DEMAND_ORIGIN}/v1/base64/encode", {"text": "hello"}),
-    ("capi2 · Base64 Decode", "Decode Base64 into UTF-8 text for deterministic agent workflows.", "Developer Tools", ["base64", "decode", "encoding", "x402", "agent-tools"], f"{DEMAND_ORIGIN}/v1/base64/decode", {"data": "aGVsbG8=", "urlsafe": False}),
-    ("capi2 · JWT Decode", "Decode JWT header and payload without signature verification for token inspection and debugging.", "Developer Tools", ["jwt", "decode", "token", "x402", "agent-tools"], f"{DEMAND_ORIGIN}/v1/jwt/decode", {"token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ0ZXN0In0."}),
-    ("capi2 · JSON Canonicalize + SHA-256", "Canonicalize JSON with sorted keys and compact separators and return a SHA-256 fingerprint.", "Developer Tools", ["json", "canonicalize", "sha256", "x402", "agent-tools"], f"{DEMAND_ORIGIN}/v1/json/canonicalize", {"value": {"b": 2, "a": 1}}),
-    ("capi2 · Public Claim Verification", "Verify one public vendor claim against a supplied public source URL and return evidence with a machine-readable verdict.", "Research", ["verification", "evidence", "research", "x402", "agent-tools"], f"{CLAIM_ORIGIN}/v1/claim-verify", {"vendor_url": "https://example.com", "claim": "Example Domain"}),
-]
+state = {
+    "ok": False,
+    "status": "starting",
+    "agentId": None,
+    "apiKeyPrefix": None,
+    "lastScanAt": None,
+    "openRequestsScanned": 0,
+    "matchingRequests": [],
+    "bids": [],
+    "fulfilled": [],
+    "errors": [],
+}
 
-state = {"ok": False, "status": "starting", "agentId": None, "apiKeyPrefix": None, "offers": [], "errors": []}
-
-
-def get_existing_titles():
-    try:
-        r = requests.get(f"{BASE}/api/v1/offers", params={"q": "capi2", "offerType": "api", "limit": 100}, timeout=20)
-        r.raise_for_status()
-        body = r.json()
-        rows = body.get("offers", []) if isinstance(body, dict) else body
-        return {str(x.get("title", "")): x for x in rows if isinstance(x, dict)}
-    except Exception as exc:
-        state["errors"].append(f"catalog:{exc.__class__.__name__}")
-        return {}
+api_key = None
+bid_request_ids = set()
+fulfilled_request_ids = set()
+bid_day = None
+bids_today = 0
 
 
-def onboard():
-    time.sleep(3)
-    wanted = {row[0] for row in OFFERS}
-    existing = get_existing_titles()
-    if wanted.issubset(set(existing)):
-        state["offers"] = [
-            {"title": t, "offerId": existing[t].get("offerId") or existing[t].get("id"), "buyUrl": existing[t].get("buyUrl")}
-            for t in sorted(wanted)
-        ]
-        state.update(ok=True, status="already_listed")
-        print(f"payanagent onboarding: already_listed offers={len(state['offers'])}", flush=True)
-        return
+def now_iso():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+
+def auth_headers():
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+
+def register_provider():
+    global api_key
     payload = {
-        "name": "capi2 Agent Commerce",
-        "description": "x402-native micro-APIs for public verification, hashing, encoding and structured utility workflows.",
+        "name": "capi2 Deterministic Utility Provider",
+        "description": "Automated provider for deterministic SHA-256/SHA-512 hashing, Base64 encode/decode, JWT payload decoding, and canonical JSON fingerprints. Bids only when the request clearly matches one of these capabilities.",
         "walletAddress": WALLET,
         "chain": "base",
-        "tags": ["x402", "verification", "hashing", "encoding", "agent-tools"],
-        "providerType": "api",
-        "agentUrl": DEMAND_ORIGIN,
+        "tags": ["sha256", "sha512", "base64", "jwt", "json", "deterministic", "x402"],
+        "providerType": "agent",
+        "agentUrl": "https://capi2-demand-tools.onrender.com",
     }
+    r = requests.post(f"{BASE}/api/v1/agents", json=payload, timeout=25)
+    if not r.ok:
+        raise RuntimeError(f"register_provider:{r.status_code}:{r.text[:240]}")
+    body = r.json()
+    api_key = body.get("apiKey")
+    if not api_key:
+        raise RuntimeError("register_provider:no_api_key")
+    state["agentId"] = body.get("agentId")
+    state["apiKeyPrefix"] = body.get("apiKeyPrefix")
+    print(f"payan buyer-watch: provider registered agentId={state['agentId']}", flush=True)
+
+
+def detect_capability(title, description):
+    text = f"{title} {description}".lower()
+    # Skip obviously unrelated/risky requests even if a keyword collides.
+    blocked = ("exploit", "malware", "steal", "password", "credential theft", "bypass auth")
+    if any(x in text for x in blocked):
+        return None
+    if ("canonical" in text or "canonicalize" in text) and "json" in text:
+        return "json_canonicalize"
+    if "base64" in text and any(x in text for x in ("decode", "decoding")):
+        return "base64_decode"
+    if "base64" in text and any(x in text for x in ("encode", "encoding")):
+        return "base64_encode"
+    if "jwt" in text and any(x in text for x in ("decode", "inspect", "payload", "header")):
+        return "jwt_decode"
+    if "sha512" in text or "sha-512" in text:
+        return "sha512"
+    if "sha256" in text or "sha-256" in text:
+        return "sha256"
+    return None
+
+
+def bid_message(capability):
+    labels = {
+        "sha256": "SHA-256 hashing",
+        "sha512": "SHA-512 hashing",
+        "base64_encode": "Base64 encoding",
+        "base64_decode": "Base64 decoding",
+        "jwt_decode": "JWT header/payload decoding without signature verification",
+        "json_canonicalize": "canonical JSON + SHA-256 fingerprinting",
+    }
+    return (
+        f"capi2 can deliver this automatically as deterministic {labels[capability]}. "
+        "No model guesswork; machine-readable JSON output. Bid is 1 cent USDC and delivery is normally under 60 seconds after acceptance."
+    )
+
+
+def reset_bid_budget():
+    global bid_day, bids_today
+    day = datetime.now(timezone.utc).date().isoformat()
+    if day != bid_day:
+        bid_day = day
+        bids_today = 0
+
+
+def submit_bid(req, capability):
+    global bids_today
+    reset_bid_budget()
+    if bids_today >= MAX_BIDS_PER_DAY:
+        return False
+    request_id = req.get("_id") or req.get("id")
+    if not request_id or request_id in bid_request_ids:
+        return False
+    budget = int(req.get("budgetMaxCents") or 0)
+    if budget < 1:
+        return False
+    body = {
+        "priceCents": 1,
+        "estimatedDurationSeconds": 60,
+        "message": bid_message(capability),
+    }
+    r = requests.post(
+        f"{BASE}/api/v1/requests/{request_id}/bid",
+        headers=auth_headers(),
+        json=body,
+        timeout=20,
+    )
+    if r.status_code == 201:
+        bid_id = r.json().get("bidId")
+        bid_request_ids.add(request_id)
+        bids_today += 1
+        row = {"requestId": request_id, "bidId": bid_id, "capability": capability, "priceCents": 1, "at": now_iso()}
+        state["bids"].append(row)
+        state["bids"] = state["bids"][-20:]
+        print(f"payan buyer-watch: BID request={request_id} capability={capability} bidId={bid_id} price=1c", flush=True)
+        return True
+    # A duplicate/closed request is not fatal; retain a bounded diagnostic.
+    print(f"payan buyer-watch: bid rejected request={request_id} status={r.status_code} body={r.text[:180]}", flush=True)
+    return False
+
+
+def parse_payload(raw):
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return raw
+    s = raw.strip()
+    if not s:
+        return None
     try:
-        r = requests.post(f"{BASE}/api/v1/agents", json=payload, timeout=25)
-        if not r.ok:
-            state["status"] = "registration_failed"
-            state["errors"].append(f"agent:{r.status_code}:{r.text[:300]}")
-            print(f"payanagent onboarding: registration_failed status={r.status_code} error={r.text[:300]}", flush=True)
-            return
-        reg = r.json()
-        api_key = reg.get("apiKey")
-        state["agentId"] = reg.get("agentId")
-        state["apiKeyPrefix"] = reg.get("apiKeyPrefix")
-        if not api_key:
-            state["status"] = "registration_failed"
-            state["errors"].append("agent:no_api_key")
-            return
+        return json.loads(s)
+    except Exception:
+        return s
 
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        created = []
-        for title, description, category, tags, url, verification_body in OFFERS:
-            if title in existing:
-                row = existing[title]
-                created.append({"title": title, "offerId": row.get("offerId") or row.get("id"), "buyUrl": row.get("buyUrl"), "status": "existing"})
-                continue
-            body = {
-                "title": title,
-                "description": description,
-                "category": category,
-                "tags": tags,
-                "offerType": "api",
-                "externalUrl": url,
-                "httpMethod": "POST",
-                "verificationBody": verification_body,
-            }
-            rr = requests.post(f"{BASE}/api/v1/offers", headers=headers, json=body, timeout=35)
-            if rr.ok:
-                data = rr.json()
-                offer_id = data.get("offerId") or data.get("id")
-                created.append({"title": title, "offerId": offer_id, "buyUrl": data.get("buyUrl"), "status": "created"})
-                print(f"payanagent offer: status={rr.status_code} title={title} offerId={offer_id}", flush=True)
-            else:
-                err = rr.text[:240].replace("\n", " ")
-                state["errors"].append(f"offer:{title}:{rr.status_code}:{err}")
-                print(f"payanagent offer: failed status={rr.status_code} title={title} error={err}", flush=True)
 
-        state["offers"] = created
-        state["ok"] = len(created) == len(OFFERS)
-        state["status"] = "listed" if state["ok"] else "partial"
-        print(f"payanagent onboarding: status={state['status']} agentId={state['agentId']} offers={len(created)}/{len(OFFERS)}", flush=True)
-        api_key = None
+def get_text_value(payload, *keys):
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        for key in keys:
+            if key in payload and isinstance(payload[key], str):
+                return payload[key]
+    return None
+
+
+def solve(capability, payload):
+    if capability == "sha256":
+        text = get_text_value(payload, "text", "input", "value", "data")
+        if text is None:
+            raise ValueError("missing text input")
+        return {"algorithm": "sha256", "digest": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+    if capability == "sha512":
+        text = get_text_value(payload, "text", "input", "value", "data")
+        if text is None:
+            raise ValueError("missing text input")
+        return {"algorithm": "sha512", "digest": hashlib.sha512(text.encode("utf-8")).hexdigest()}
+    if capability == "base64_encode":
+        text = get_text_value(payload, "text", "input", "value", "data")
+        if text is None:
+            raise ValueError("missing text input")
+        return {"encoding": "base64", "encoded": base64.b64encode(text.encode("utf-8")).decode("ascii")}
+    if capability == "base64_decode":
+        data = get_text_value(payload, "data", "text", "input", "value")
+        if data is None:
+            raise ValueError("missing base64 input")
+        decoded = base64.b64decode(data, validate=True).decode("utf-8")
+        return {"encoding": "base64", "decoded": decoded}
+    if capability == "jwt_decode":
+        token = get_text_value(payload, "token", "jwt", "text", "input")
+        if token is None:
+            raise ValueError("missing JWT token")
+        parts = token.split(".")
+        if len(parts) < 2:
+            raise ValueError("invalid JWT shape")
+        def dec(part):
+            pad = "=" * ((4 - len(part) % 4) % 4)
+            return json.loads(base64.urlsafe_b64decode(part + pad).decode("utf-8"))
+        return {"verified": False, "header": dec(parts[0]), "payload": dec(parts[1]), "note": "Decoded only; signature not verified."}
+    if capability == "json_canonicalize":
+        value = payload.get("value") if isinstance(payload, dict) and "value" in payload else payload
+        if isinstance(value, str):
+            value = json.loads(value)
+        canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return {"canonical": canonical, "sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+    raise ValueError("unsupported capability")
+
+
+def maybe_fulfill(request_id, capability):
+    if request_id in fulfilled_request_ids:
+        return
+    r = requests.get(f"{BASE}/api/v1/requests/{request_id}", headers=auth_headers(), timeout=20)
+    if not r.ok:
+        return
+    detail = r.json()
+    req = detail.get("request") or {}
+    status = req.get("status")
+    provider_id = req.get("providerId")
+    if status == "accepted" and str(provider_id) == str(state.get("agentId")):
+        payload = parse_payload(req.get("inputPayload"))
+        try:
+            output = solve(capability, payload)
+        except Exception as exc:
+            state["errors"].append(f"solve:{request_id}:{exc}")
+            state["errors"] = state["errors"][-20:]
+            print(f"payan buyer-watch: accepted but cannot solve request={request_id} error={exc}", flush=True)
+            return
+        body = {"outputPayload": json.dumps({"protocol": "capi2.request-delivery/1.0", "capability": capability, "result": output}, separators=(",", ":"))}
+        rr = requests.post(f"{BASE}/api/v1/requests/{request_id}/fulfill", headers=auth_headers(), json=body, timeout=20)
+        if rr.ok:
+            fulfilled_request_ids.add(request_id)
+            row = {"requestId": request_id, "capability": capability, "at": now_iso()}
+            state["fulfilled"].append(row)
+            state["fulfilled"] = state["fulfilled"][-20:]
+            print(f"payan buyer-watch: FULFILLED request={request_id} capability={capability}", flush=True)
+        else:
+            print(f"payan buyer-watch: fulfill rejected request={request_id} status={rr.status_code} body={rr.text[:180]}", flush=True)
+
+
+def scan_once():
+    r = requests.get(f"{BASE}/api/v1/requests", params={"status": "open", "limit": 100}, timeout=20)
+    if not r.ok:
+        raise RuntimeError(f"request_scan:{r.status_code}:{r.text[:200]}")
+    rows = r.json().get("requests", [])
+    state["lastScanAt"] = now_iso()
+    state["openRequestsScanned"] = len(rows)
+    matches = []
+    for req in rows:
+        title = str(req.get("title") or "")
+        description = str(req.get("description") or "")
+        capability = detect_capability(title, description)
+        if not capability:
+            continue
+        request_id = req.get("_id") or req.get("id")
+        matches.append({"requestId": request_id, "title": title[:160], "capability": capability, "budgetMaxCents": req.get("budgetMaxCents")})
+        submit_bid(req, capability)
+    state["matchingRequests"] = matches[:20]
+    # Poll requests we've already bid on; if accepted by the buyer, deliver automatically.
+    capability_by_request = {x["requestId"]: x["capability"] for x in state["bids"]}
+    for request_id in list(bid_request_ids):
+        capability = capability_by_request.get(request_id)
+        if capability:
+            maybe_fulfill(request_id, capability)
+    print(f"payan buyer-watch: scan open={len(rows)} matches={len(matches)} bidsToday={bids_today}", flush=True)
+
+
+def worker():
+    try:
+        register_provider()
+        state["ok"] = True
+        state["status"] = "watching_open_requests"
     except Exception as exc:
-        state["status"] = "exception"
-        state["errors"].append(f"onboard:{exc.__class__.__name__}:{str(exc)[:240]}")
-        print(f"payanagent onboarding: exception={exc.__class__.__name__} detail={str(exc)[:240]}", flush=True)
+        state["status"] = "registration_failed"
+        state["errors"].append(str(exc)[:300])
+        print(f"payan buyer-watch: registration failed {exc}", flush=True)
+        return
+    while True:
+        try:
+            scan_once()
+        except Exception as exc:
+            state["errors"].append(f"scan:{exc.__class__.__name__}:{str(exc)[:220]}")
+            state["errors"] = state["errors"][-20:]
+            print(f"payan buyer-watch: scan error={exc.__class__.__name__} detail={str(exc)[:200]}", flush=True)
+        time.sleep(max(60, SCAN_SECONDS))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -128,5 +304,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    threading.Thread(target=onboard, daemon=True).start()
+    threading.Thread(target=worker, daemon=True).start()
     HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
