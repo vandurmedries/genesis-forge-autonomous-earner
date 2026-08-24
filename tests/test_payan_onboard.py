@@ -55,6 +55,23 @@ class CapabilityMatchingTests(unittest.TestCase):
         self.assertTrue(payan.already_bid_remotely("request-1"))
         get.assert_called_once()
 
+    @patch.object(payan, "already_bid_remotely", return_value=True)
+    def test_existing_bid_keeps_capability_for_fulfillment_after_restart(self, _remote):
+        request_id = "existing-request"
+        old_bids = list(payan.state["bids"])
+        old_ids = set(payan.bid_request_ids)
+        try:
+            payan.state["bids"] = []
+            payan.bid_request_ids.clear()
+            self.assertFalse(payan.submit_bid({"_id": request_id, "budgetMaxCents": 4}, "catalog_health"))
+            self.assertIn(request_id, payan.bid_request_ids)
+            self.assertEqual(payan.state["bids"][0]["capability"], "catalog_health")
+            self.assertEqual(payan.state["bids"][0]["status"], "existing_remote_bid")
+        finally:
+            payan.state["bids"] = old_bids
+            payan.bid_request_ids.clear()
+            payan.bid_request_ids.update(old_ids)
+
     @patch.object(payan.requests, "post")
     def test_registration_fails_closed_without_configured_identity(self, post):
         old_key = payan.api_key

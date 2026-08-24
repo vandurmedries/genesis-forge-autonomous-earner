@@ -193,6 +193,17 @@ def submit_bid(req, capability):
         return False
     if already_bid_remotely(request_id):
         bid_request_ids.add(request_id)
+        # Preserve capability mapping across deploys so an accepted remote bid
+        # is still fulfilled automatically after this process restarts.
+        state["bids"].append({
+            "requestId": request_id,
+            "bidId": None,
+            "capability": capability,
+            "priceCents": 1,
+            "at": now_iso(),
+            "status": "existing_remote_bid",
+        })
+        state["bids"] = state["bids"][-20:]
         return False
     budget = int(req.get("budgetMaxCents") or 0)
     if budget < 1:
