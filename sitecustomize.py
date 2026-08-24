@@ -1,10 +1,14 @@
-"""One-shot capi2 x402 directory distribution hook.
+"""capi2 x402 runtime compatibility and one-shot directory distribution.
 
-Gated by CAPI2_DIRECTORY_DISTRIBUTE and the Claim Verify uvicorn target.
-Modes:
+When this file is on PYTHONPATH it makes API-style HTTP 402 responses mirror the
+canonical x402 v2 PaymentRequired object into the JSON response body while
+preserving the SDK-generated PAYMENT-REQUIRED header. This improves compatibility
+with independent crawlers that inspect the body as well as the canonical header.
+
+Optional distribution modes via CAPI2_DIRECTORY_DISTRIBUTE:
 - all/true: submit to 402 Index and Market402
 - market402: submit only to Market402
-No payment is ever attempted.
+No payment is ever attempted by this hook.
 """
 
 from __future__ import annotations
@@ -16,6 +20,50 @@ import threading
 import time
 import urllib.error
 import urllib.request
+
+
+def _install_x402_body_mirror() -> None:
+    if os.getenv("CAPI2_MIRROR_X402_BODY", "true").lower() != "true":
+        return
+    try:
+        from x402.http.x402_http_server_base import x402HTTPServerBase
+    except Exception as exc:
+        print(f"x402-body-mirror: unavailable {type(exc).__name__}: {exc}", flush=True)
+        return
+
+    original = x402HTTPServerBase._create_http_response
+    if getattr(original, "_capi2_body_mirror", False):
+        return
+
+    def wrapped(self, payment_required, is_web_browser, paywall_config=None, custom_html=None, unpaid_response=None):
+        response = original(
+            self,
+            payment_required,
+            is_web_browser,
+            paywall_config,
+            custom_html,
+            unpaid_response,
+        )
+        if (
+            response.status == 402
+            and not is_web_browser
+            and (response.body is None or response.body == {})
+        ):
+            try:
+                if hasattr(payment_required, "model_dump"):
+                    response.body = payment_required.model_dump(by_alias=True, exclude_none=True)
+                elif isinstance(payment_required, dict):
+                    response.body = dict(payment_required)
+            except Exception as exc:
+                print(f"x402-body-mirror: serialize error {type(exc).__name__}: {exc}", flush=True)
+        return response
+
+    wrapped._capi2_body_mirror = True
+    x402HTTPServerBase._create_http_response = wrapped
+    print("x402-body-mirror: installed", flush=True)
+
+
+_install_x402_body_mirror()
 
 
 def _is_claim_verify_process() -> bool:
@@ -128,7 +176,6 @@ def _submit_402index() -> None:
 
 
 def _submit_market402() -> None:
-    # Market402's current /submit schema requires the field name `resource`.
     for item in _registrations():
         _post_json(
             "https://market402.com/submit",
