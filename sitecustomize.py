@@ -1,10 +1,10 @@
 """One-shot capi2 x402 directory distribution hook.
 
-Python imports sitecustomize automatically at interpreter startup. This hook is
-strictly gated by CAPI2_DIRECTORY_DISTRIBUTE=true and by the Claim Verify
-uvicorn target, so normal repo processes are unaffected. It performs free,
-best-effort directory submissions from Render's production network and never
-attempts a payment.
+Gated by CAPI2_DIRECTORY_DISTRIBUTE and the Claim Verify uvicorn target.
+Modes:
+- all/true: submit to 402 Index and Market402
+- market402: submit only to Market402
+No payment is ever attempted.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 
@@ -30,43 +29,18 @@ def _post_json(url: str, payload: dict, label: str) -> tuple[int | None, str]:
         data=data,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "capi2-directory-distributor/1.0",
+            "User-Agent": "capi2-directory-distributor/1.1",
         },
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
             body = response.read().decode("utf-8", "replace")
-            print(f"directory-distribution {label}: HTTP {response.status} {body[:1600]}", flush=True)
+            print(f"directory-distribution {label}: HTTP {response.status} {body[:1800]}", flush=True)
             return response.status, body
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
-        print(f"directory-distribution {label}: HTTP {exc.code} {body[:1600]}", flush=True)
-        return exc.code, body
-    except Exception as exc:
-        print(f"directory-distribution {label}: ERROR {type(exc).__name__}: {exc}", flush=True)
-        return None, ""
-
-
-def _post_form(url: str, payload: dict, label: str) -> tuple[int | None, str]:
-    data = urllib.parse.urlencode(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "capi2-directory-distributor/1.0",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            body = response.read().decode("utf-8", "replace")
-            print(f"directory-distribution {label}: HTTP {response.status} {body[:1600]}", flush=True)
-            return response.status, body
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", "replace")
-        print(f"directory-distribution {label}: HTTP {exc.code} {body[:1600]}", flush=True)
+        print(f"directory-distribution {label}: HTTP {exc.code} {body[:1800]}", flush=True)
         return exc.code, body
     except Exception as exc:
         print(f"directory-distribution {label}: ERROR {type(exc).__name__}: {exc}", flush=True)
@@ -134,13 +108,9 @@ def _registrations() -> list[dict]:
     ]
 
 
-def _run_distribution() -> None:
-    # Let uvicorn bind first so external verification probes can reach production.
-    time.sleep(20)
-    print("directory-distribution: starting one-shot Market402 + 402 Index submissions", flush=True)
-
+def _submit_402index() -> None:
     for item in _registrations():
-        index_payload = {
+        payload = {
             "url": item["url"],
             "name": item["name"],
             "protocol": "x402",
@@ -154,18 +124,30 @@ def _run_distribution() -> None:
             "provider": "capi2",
             "contact_email": "capi2@agentmail.to",
         }
-        _post_json("https://402index.io/api/v1/register", index_payload, f"402index {item['name']}")
+        _post_json("https://402index.io/api/v1/register", payload, f"402index {item['name']}")
 
+
+def _submit_market402() -> None:
+    # Market402's current /submit schema requires the field name `resource`.
     for item in _registrations():
-        status, _ = _post_json("https://market402.com/submit", {"url": item["url"]}, f"market402-json {item['name']}")
-        if status in {400, 404, 415, 422}:
-            _post_form("https://market402.com/submit", {"url": item["url"]}, f"market402-form {item['name']}")
+        _post_json(
+            "https://market402.com/submit",
+            {"resource": item["url"]},
+            f"market402 {item['name']}",
+        )
 
-    print("directory-distribution: one-shot submissions finished", flush=True)
+
+def _run_distribution(mode: str) -> None:
+    time.sleep(20)
+    print(f"directory-distribution: starting one-shot mode={mode}", flush=True)
+    if mode in {"true", "all"}:
+        _submit_402index()
+        _submit_market402()
+    elif mode == "market402":
+        _submit_market402()
+    print(f"directory-distribution: one-shot mode={mode} finished", flush=True)
 
 
-if (
-    os.getenv("CAPI2_DIRECTORY_DISTRIBUTE", "false").lower() == "true"
-    and _is_claim_verify_process()
-):
-    threading.Thread(target=_run_distribution, daemon=True).start()
+_mode = os.getenv("CAPI2_DIRECTORY_DISTRIBUTE", "false").lower()
+if _mode in {"true", "all", "market402"} and _is_claim_verify_process():
+    threading.Thread(target=_run_distribution, args=(_mode,), daemon=True).start()
