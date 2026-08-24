@@ -3,4 +3,4 @@ uvicorn[standard]>=0.30
 requests>=2.32
 beautifulsoup4>=4.12
 pydantic>=2.8
-x402[fastapi,evm]>=2.17.0
+x402[fastapi,evm,extensions]>=2.17.0
