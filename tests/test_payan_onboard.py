@@ -47,14 +47,13 @@ class CapabilityMatchingTests(unittest.TestCase):
         self.assertTrue(payan.has_solvable_input({"inputPayload": '{"text":"hello"}'}, "sha256"))
 
     @patch.object(payan.requests, "get")
-    def test_duplicate_wallet_bid_is_detected_across_agent_ids(self, get):
+    def test_known_legacy_provider_bid_is_detected(self, get):
         request_response = Mock(ok=True)
-        request_response.json.return_value = {"bids": [{"bidderId": "duplicate-agent"}]}
-        agent_response = Mock(ok=True)
-        agent_response.json.return_value = {"walletAddress": payan.WALLET.lower()}
-        get.side_effect = [request_response, agent_response]
+        request_response.json.return_value = {"bids": [{"bidderId": next(iter(payan.LEGACY_PROVIDER_AGENT_IDS))}]}
+        get.return_value = request_response
 
         self.assertTrue(payan.already_bid_remotely("request-1"))
+        get.assert_called_once()
 
     @patch.object(payan.requests, "post")
     def test_registration_fails_closed_without_configured_identity(self, post):
