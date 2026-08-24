@@ -64,7 +64,7 @@ def onboard():
         if not r.ok:
             state["status"] = "registration_failed"
             state["errors"].append(f"agent:{r.status_code}:{r.text[:300]}")
-            print(f"payanagent onboarding: registration_failed status={r.status_code}", flush=True)
+            print(f"payanagent onboarding: registration_failed status={r.status_code} error={r.text[:300]}", flush=True)
             return
         reg = r.json()
         api_key = reg.get("apiKey")
@@ -99,8 +99,9 @@ def onboard():
                 created.append({"title": title, "offerId": offer_id, "buyUrl": data.get("buyUrl"), "status": "created"})
                 print(f"payanagent offer: status={rr.status_code} title={title} offerId={offer_id}", flush=True)
             else:
-                state["errors"].append(f"offer:{title}:{rr.status_code}:{rr.text[:240]}")
-                print(f"payanagent offer: failed status={rr.status_code} title={title}", flush=True)
+                err = rr.text[:240].replace("\n", " ")
+                state["errors"].append(f"offer:{title}:{rr.status_code}:{err}")
+                print(f"payanagent offer: failed status={rr.status_code} title={title} error={err}", flush=True)
 
         state["offers"] = created
         state["ok"] = len(created) == len(OFFERS)
@@ -110,7 +111,7 @@ def onboard():
     except Exception as exc:
         state["status"] = "exception"
         state["errors"].append(f"onboard:{exc.__class__.__name__}:{str(exc)[:240]}")
-        print(f"payanagent onboarding: exception={exc.__class__.__name__}", flush=True)
+        print(f"payanagent onboarding: exception={exc.__class__.__name__} detail={str(exc)[:240]}", flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
