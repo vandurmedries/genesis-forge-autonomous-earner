@@ -1,0 +1,31 @@
+{
+  "protocol": "capi2.transaction/0.1",
+  "transaction_id": "7c3edb5b-08b6-4a7c-bbed-3f4f6ea51f01",
+  "external_id": "buyer-example-001",
+  "created_at": "2026-08-24T01:45:00Z",
+  "updated_at": null,
+  "status": "ROUTED",
+  "request": {
+    "capability": "public vendor claim verification",
+    "requested_action": "Verify one supplied public claim against its source page",
+    "input": {
+      "vendor_url": "https://example.com/security",
+      "claim": "Example publishes a security policy"
+    }
+  },
+  "routing": {
+    "decision": "matched",
+    "service_id": "capi2.claim_verify.v1",
+    "provider_id": "capi2",
+    "quote_url": "https://capi2-claim-verify.onrender.com/v1/quote",
+    "execute_url": "https://capi2-claim-verify.onrender.com/v1/claim-verify"
+  },
+  "quote": {
+    "price": "$0.01",
+    "asset": "USDC",
+    "payment_protocol": "x402"
+  },
+  "result": null,
+  "exception": null,
+  "extensions": {}
+}
