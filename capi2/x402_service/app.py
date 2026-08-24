@@ -25,8 +25,8 @@ MAX_REDIRECTS = 3
 
 app = FastAPI(
     title="capi2 Claim Verify",
-    version="1.2.0",
-    description="Public-evidence vendor claim verification with x402 payment on Base USDC.",
+    version="1.3.0",
+    description="Agent-discoverable public-evidence vendor claim verification with x402 payment on Base USDC.",
 )
 
 facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
@@ -85,7 +85,7 @@ class EvidenceSnippet(BaseModel):
 
 
 class ClaimVerifyResponse(BaseModel):
-    protocol: str = "capi2.claim_verify/1.2"
+    protocol: str = "capi2.claim_verify/1.3"
     claim_id: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_url: str
@@ -157,7 +157,7 @@ def _validate_public_http_url(url: str) -> None:
 
 def _fetch_public_source(url: str) -> tuple[str, str]:
     current = url
-    headers = {"User-Agent": "capi2-claim-verify/1.2 (+public-evidence-check)"}
+    headers = {"User-Agent": "capi2-claim-verify/1.3 (+public-evidence-check)"}
 
     for _ in range(MAX_REDIRECTS + 1):
         _validate_public_http_url(current)
@@ -207,12 +207,80 @@ def _fetch_public_source(url: str) -> tuple[str, str]:
     raise HTTPException(status_code=422, detail="too_many_source_redirects")
 
 
+def _lifecycle() -> list[dict]:
+    return [
+        {
+            "step": "discover",
+            "method": "GET",
+            "path": "/.well-known/agent.json",
+            "payment_required": False,
+        },
+        {
+            "step": "quote",
+            "method": "GET",
+            "path": "/v1/quote",
+            "payment_required": False,
+        },
+        {
+            "step": "pay",
+            "method": "POST",
+            "path": "/v1/claim-verify",
+            "behavior": "An unpaid request returns HTTP 402 with x402 payment requirements; the buyer pays and retries with proof.",
+        },
+        {
+            "step": "execute",
+            "method": "POST",
+            "path": "/v1/claim-verify",
+            "behavior": "After x402 verification/settlement, capi2 executes the requested claim-verification task.",
+        },
+        {
+            "step": "result",
+            "mode": "inline",
+            "success_status": 200,
+            "content_type": "application/json",
+            "behavior": "The paid request returns the machine-readable result directly in the successful response.",
+        },
+    ]
+
+
+def _quote() -> dict:
+    return {
+        "protocol": "capi2.quote/1.0",
+        "service": "claim_verify",
+        "description": "Verify one public vendor claim against one supplied public source URL.",
+        "price": PRICE,
+        "asset": "USDC",
+        "network": NETWORK,
+        "payment_protocol": "x402",
+        "pay_to": PAY_TO,
+        "execute": {
+            "method": "POST",
+            "path": "/v1/claim-verify",
+            "content_type": "application/json",
+        },
+        "result": {
+            "mode": "inline",
+            "success_status": 200,
+            "content_type": "application/json",
+        },
+        "marketplace": {
+            "standard_fee_bps": 1000,
+            "provider_share_bps": 9000,
+            "note": "The 10/90 split applies to routed third-party marketplace jobs after successful delivery and provider payout onboarding; this first-party capi2 Claim Verify service settles to the configured capi2 pay_to address.",
+        },
+    }
+
+
 def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "protocol": "capi2.claim_verify/1.2",
+        "protocol": "capi2.claim_verify/1.3",
         "description": "Verify a public vendor claim against a supplied public source URL.",
+        "discovery": "/.well-known/agent.json",
+        "openapi": "/openapi.json",
+        "quote": {"method": "GET", "path": "/v1/quote"},
         "endpoint": {"method": "POST", "path": "/v1/claim-verify"},
+        "lifecycle": _lifecycle(),
         "payment": {
             "protocol": "x402",
             "network": NETWORK,
@@ -229,6 +297,7 @@ def _manifest() -> dict:
             "optional": ["vendor_name", "claim_id", "request_type", "verification_type"],
         },
         "output": {
+            "delivery": "inline_after_successful_payment_and_execution",
             "status_fields": ["verification_status", "verification_result"],
             "status_values": ["supported", "contradicted", "uncertain"],
             "evidence_fields": ["evidence_summary", "evidence_source_urls", "evidence"],
@@ -241,17 +310,23 @@ async def health():
     return {
         "ok": True,
         "service": "capi2-claim-verify",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "network": NETWORK,
         "price": PRICE,
         "settlement": "USDC on Base",
         "pay_to": PAY_TO,
+        "autonomous_flow": "discover -> quote -> x402 pay -> execute -> inline result",
     }
 
 
 @app.get("/.well-known/agent.json")
 async def agent_manifest():
     return _manifest()
+
+
+@app.get("/v1/quote")
+async def claim_verify_quote():
+    return _quote()
 
 
 @app.get("/v1/claim-verify/schema")
