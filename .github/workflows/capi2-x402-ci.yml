@@ -17,9 +17,6 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: capi2/x402_service
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,22 +24,58 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Match the Python runtime currently used by the Render production service.
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: capi2/x402_service/requirements.txt
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+        run: python -m pip install --upgrade pip && pip install -r capi2/x402_service/requirements.txt
 
       - name: Compile
-        run: python -m compileall -q .
+        run: python -m compileall -q capi2/x402_service
 
-      - name: Import FastAPI app
+      - name: Import production FastAPI module
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python - <<'PY'
-          import app
-          assert app.NETWORK == "eip155:8453"
-          assert app.PRICE.startswith("$")
-          assert any(getattr(route, "path", None) == "/v1/claim-verify" for route in app.app.routes)
-          print("capi2 x402 service import OK")
+          import importlib.metadata as metadata
+          from fastapi.testclient import TestClient
+          from capi2.x402_service import app as service
+
+          print("python import path: production package")
+          print("x402:", metadata.version("x402"))
+          print("fastapi:", metadata.version("fastapi"))
+
+          assert service.NETWORK == "eip155:8453"
+          assert service._price_usd() > 0
+
+          route_paths = {getattr(route, "path", None) for route in service.app.routes}
+          required_paths = {
+              "/health",
+              "/.well-known/x402",
+              "/.well-known/agent.json",
+              "/v1/quote",
+              "/v1/claim-verify",
+          }
+          missing = required_paths - route_paths
+          assert not missing, f"missing FastAPI routes: {sorted(missing)}"
+
+          client = TestClient(service.app)
+          health = client.get("/health")
+          assert health.status_code == 200, health.text
+          assert health.json().get("ok") is True
+
+          manifest = client.get("/.well-known/x402")
+          assert manifest.status_code == 200, manifest.text
+          body = manifest.json()
+          assert body.get("protocol") == "x402"
+          assert body.get("network") == "eip155:8453"
+
+          quote = client.get("/v1/quote")
+          assert quote.status_code == 200, quote.text
+          assert quote.json().get("payment_protocol") == "x402"
+
+          print("capi2 x402 production import + smoke checks OK")
           PY
