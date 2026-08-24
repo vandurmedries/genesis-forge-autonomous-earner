@@ -1,1 +1,20 @@
-{"name":"capi2-a2a-claim-verify","version":"1.0.0","private":true,"scripts":{"start":"node server.js"},"engines":{"node":">=20"}}
+{
+  "name": "capi2-a2a-broker",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@x402/core": "^2.20.0",
+    "@x402/evm": "^2.20.0",
+    "@x402/express": "^2.20.0",
+    "@x402/fetch": "^2.20.0",
+    "express": "^5.1.0",
+    "viem": "^2.37.0"
+  }
+}

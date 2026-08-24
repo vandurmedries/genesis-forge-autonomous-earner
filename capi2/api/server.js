@@ -1,53 +1,306 @@
-const http = require('node:http');
-const { URL } = require('node:url');
+import express from "express";
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { HTTPFacilitatorClient } from "@x402/core/server";
+import { ExactEvmScheme as ExactEvmServerScheme } from "@x402/evm/exact/server";
+import { ExactEvmScheme as ExactEvmClientScheme } from "@x402/evm/exact/client";
+import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import { privateKeyToAccount } from "viem/accounts";
 
 const PORT = Number(process.env.PORT || 3000);
-const STOP = new Set(['a','an','the','and','or','but','of','to','in','on','for','with','as','at','by','from','is','are','was','were','be','been','being','it','its','that','this','these','those','they','their','them','we','our','you','your','has','have','had','does','do','did','will','would','can','could','should','may','might','must','about','into','than','then','also','only','any','all','such','per','via','vendor','company','product']);
-const NEGATORS = ['not ', "isn't ", "aren't ", "doesn't ", "don't ", 'never ', 'no longer ', 'without '];
+const NETWORK = process.env.CAPI2_X402_NETWORK || "eip155:8453";
+const PAY_TO = process.env.CAPI2_PAY_TO || "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a";
+const FACILITATOR_URL = process.env.CAPI2_FACILITATOR_URL || "https://facilitator.payai.network";
+const AGENT402_ORIGIN = (process.env.CAPI2_AGENT402_ORIGIN || "https://agent402.tools").replace(/\/+$/, "");
+const BROKER_ENABLED = String(process.env.CAPI2_BROKER_ENABLED || "false").toLowerCase() === "true";
+const BROKER_PRIVATE_KEY = String(process.env.CAPI2_BROKER_PRIVATE_KEY || "").trim();
+const DAILY_BUDGET_USD = Number(process.env.CAPI2_BROKER_DAILY_BUDGET_USD || "0.10");
 
-function headers(extra={}) { return {'content-type':'application/json; charset=utf-8','access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type,authorization,payment-signature,x-payment','cache-control':'no-store',...extra}; }
-function send(res,status,obj){res.writeHead(status,headers());res.end(JSON.stringify(obj));}
-function normalize(s){return String(s||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9%+./ -]+/g,' ').replace(/\s+/g,' ').trim();}
-function tokens(s){return [...new Set(normalize(s).split(/\s+/).filter(t=>t.length>=3&&!STOP.has(t)))];}
-function safePublicUrl(value){try{const u=new URL(value);if(!['https:','http:'].includes(u.protocol))return null;const h=u.hostname.toLowerCase();if(!h||h==='localhost'||h.endsWith('.local')||h==='0.0.0.0'||h==='127.0.0.1'||h==='::1')return null;if(/^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h))return null;return u.toString();}catch{return null;}}
-function splitSnippets(text){return String(text||'').replace(/\r/g,'').split(/\n+|(?<=[.!?])\s+/).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x.length>=35&&x.length<=900);}
-function scoreSnippet(snippet,claimTokens,claimNorm){const n=normalize(snippet);const matched=claimTokens.filter(t=>n.includes(t));let score=claimTokens.length?matched.length/claimTokens.length:0;if(claimNorm.length>=15&&n.includes(claimNorm))score=Math.max(score,1);return{score:Math.min(1,score+Math.min(.2,matched.length*.025)),matched};}
-function directContradiction(claim,snippet){const c=normalize(claim),s=normalize(snippet);const cNeg=NEGATORS.some(n=>c.includes(n.trim())),sNeg=NEGATORS.some(n=>s.includes(n.trim()));const core=tokens(claim).filter(t=>!['not','never','without'].includes(t));const overlap=core.filter(t=>s.includes(t)).length/Math.max(1,core.length);return overlap>=.7&&cNeg!==sNeg;}
-async function readPublicUrl(url){const r=await fetch(`https://r.jina.ai/${url}`,{headers:{accept:'text/plain','user-agent':'capi2-a2a/1.0 public-evidence-verifier'},signal:AbortSignal.timeout(12000)});if(!r.ok)throw new Error(`reader_http_${r.status}`);return(await r.text()).slice(0,120000);}
-async function readBody(req){return await new Promise((resolve,reject)=>{let data='';req.on('data',c=>{data+=c;if(data.length>32768){reject(new Error('body_too_large'));req.destroy();}});req.on('end',()=>{try{resolve(JSON.parse(data||'{}'));}catch{reject(new Error('invalid_json'));}});req.on('error',reject);});}
+const TIERS = {
+  base: {
+    path: "/v1/commerce/execute/base",
+    buyerPrice: "$0.011",
+    buyerPriceUsd: 0.011,
+    upstreamPath: "/api/route/execute",
+    upstreamPriceUsd: 0.01,
+    underlyingMaxUsd: 0.005,
+    capi2MarginUsd: 0.001,
+  },
+  plus: {
+    path: "/v1/commerce/execute/plus",
+    buyerPrice: "$0.055",
+    buyerPriceUsd: 0.055,
+    upstreamPath: "/api/route/execute-plus",
+    upstreamPriceUsd: 0.05,
+    underlyingMaxUsd: 0.04,
+    capi2MarginUsd: 0.005,
+  },
+};
 
-async function verify(body){
-  const vendorUrl=safePublicUrl(body?.vendor_url);
-  const sourceUrl=body?.source_url?safePublicUrl(body.source_url):null;
-  const claim=String(body?.claim||'').trim();
-  const requestId=String(body?.request_id||'').trim()||crypto.randomUUID();
-  if(!vendorUrl||claim.length<8||claim.length>1200)return{status:400,body:{request_id:requestId,error:'invalid_input',required:{vendor_url:'public http(s) URL',claim:'8-1200 chars',source_url:'optional public http(s) URL'}}};
-  const urls=[...new Set([sourceUrl,vendorUrl].filter(Boolean))].slice(0,2),claimNorm=normalize(claim),claimTokens=tokens(claim),evidence=[],errors=[];
-  for(const url of urls){
-    try{
-      const text=await readPublicUrl(url);
-      const ranked=splitSnippets(text).map(snippet=>({snippet,...scoreSnippet(snippet,claimTokens,claimNorm)})).filter(x=>x.score>=.18).sort((a,b)=>b.score-a.score).slice(0,4);
-      for(const r of ranked)evidence.push({source_url:url,excerpt:r.snippet.slice(0,600),relevance:Number(r.score.toFixed(3)),matched_terms:r.matched.slice(0,12),contradicts_claim:directContradiction(claim,r.snippet)});
-    }catch(e){errors.push({source_url:url,error:String(e?.message||e).slice(0,160)});}
+const spendingAccount = BROKER_PRIVATE_KEY ? privateKeyToAccount(BROKER_PRIVATE_KEY) : null;
+const buyerClient = spendingAccount ? new x402Client() : null;
+if (buyerClient && spendingAccount) {
+  buyerClient.setSpendControls({ maxAmountPerPayment: "$0.05" });
+  buyerClient.register("eip155:*", new ExactEvmClientScheme(spendingAccount));
+}
+const payFetch = buyerClient ? wrapFetchWithPayment(fetch, buyerClient) : null;
+
+let budgetDay = new Date().toISOString().slice(0, 10);
+let spentUsd = 0;
+let reservedUsd = 0;
+
+function resetBudgetIfNeeded() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== budgetDay) {
+    budgetDay = today;
+    spentUsd = 0;
+    reservedUsd = 0;
   }
-  evidence.sort((a,b)=>b.relevance-a.relevance);
-  const top=evidence.slice(0,5),exact=top.some(e=>normalize(e.excerpt).includes(claimNorm)&&claimNorm.length>=15),contradiction=top.some(e=>e.contradicts_claim&&e.relevance>=.65),strongest=top[0]?.relevance||0;
-  let verification_status='uncertain';
-  if(contradiction)verification_status='contradicted';else if(exact||strongest>=.72)verification_status='supported';
-  const confidence=verification_status==='supported'?Math.min(.98,Math.max(.55,strongest)):verification_status==='contradicted'?Math.min(.95,Math.max(.6,strongest)):Math.min(.7,Math.max(.15,strongest*.8));
-  return{status:200,body:{request_id:requestId,vendor_url:vendorUrl,claim,verification_status,confidence:Number(confidence.toFixed(3)),evidence:top,source_urls_checked:urls,retrieval_errors:errors,method:'public-source lexical evidence check via Jina Reader; no private data; no invented certification or legal conclusion',limitations:verification_status==='uncertain'?'No sufficiently direct public-source evidence was found in the checked pages. A broader human/agent review may be needed.':'Result reflects public text evidence only and is not a legal, audit, or certification opinion.'}};
 }
 
-const server=http.createServer(async(req,res)=>{
-  try{
-    const u=new URL(req.url,'http://localhost');
-    if(req.method==='OPTIONS'){res.writeHead(204,headers());return res.end();}
-    if(req.method==='GET'&&u.pathname==='/health')return send(res,200,{ok:true,service:'capi2-a2a-claim-verify',version:'1.2.0',payment:'x402-via-payanagent',endpoint:'/claim-verify'});
-    if(req.method==='POST'&&u.pathname==='/claim-verify'){
-      let body;try{body=await readBody(req);}catch(e){return send(res,400,{error:e.message});}
-      const out=await verify(body);return send(res,out.status,out.body);
-    }
-    return send(res,404,{error:'not_found'});
-  }catch(e){return send(res,500,{error:'internal_error',detail:String(e?.message||e).slice(0,160)});}
+function reserveSpend(amountUsd) {
+  resetBudgetIfNeeded();
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    return { ok: false, reason: "invalid_spend_amount", release: () => {} };
+  }
+  if (!Number.isFinite(DAILY_BUDGET_USD) || DAILY_BUDGET_USD <= 0) {
+    return { ok: false, reason: "daily_budget_not_configured", release: () => {} };
+  }
+  if (spentUsd + reservedUsd + amountUsd > DAILY_BUDGET_USD + 1e-9) {
+    return { ok: false, reason: "daily_budget_would_be_exceeded", release: () => {} };
+  }
+  reservedUsd += amountUsd;
+  let released = false;
+  return {
+    ok: true,
+    release(success = false) {
+      if (released) return;
+      released = true;
+      reservedUsd = Math.max(0, reservedUsd - amountUsd);
+      if (success) spentUsd += amountUsd;
+    },
+  };
+}
+
+function decodePaymentResponse(headerValue) {
+  if (!headerValue) return null;
+  try {
+    return JSON.parse(Buffer.from(headerValue, "base64").toString("utf8"));
+  } catch {
+    return { raw: String(headerValue).slice(0, 500) };
+  }
+}
+
+async function readResponse(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { text: text.slice(0, 20000) };
+  }
+}
+
+const facilitator = new HTTPFacilitatorClient({ url: FACILITATOR_URL });
+const resourceServer = new x402ResourceServer(facilitator)
+  .register(NETWORK, new ExactEvmServerScheme());
+
+const paymentRoutes = Object.fromEntries(
+  Object.values(TIERS).map((tier) => [
+    `POST ${tier.path}`,
+    {
+      accepts: [
+        {
+          scheme: "exact",
+          price: tier.buyerPrice,
+          network: NETWORK,
+          payTo: PAY_TO,
+        },
+      ],
+      description: `capi2 broker execution tier: buyer pays ${tier.buyerPrice}; capi2 routes and purchases an upstream x402 service up to $${tier.underlyingMaxUsd}.`,
+      mimeType: "application/json",
+    },
+  ]),
+);
+
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json({ limit: "64kb" }));
+app.use(paymentMiddleware(paymentRoutes, resourceServer));
+
+function publicState() {
+  resetBudgetIfNeeded();
+  return {
+    broker_enabled: BROKER_ENABLED,
+    spending_wallet_configured: Boolean(spendingAccount),
+    spending_wallet_address: spendingAccount?.address || null,
+    daily_budget_usd: DAILY_BUDGET_USD,
+    spent_today_usd: Number(spentUsd.toFixed(6)),
+    reserved_usd: Number(reservedUsd.toFixed(6)),
+    hard_max_upstream_payment_usd: 0.05,
+  };
+}
+
+app.get("/health", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "capi2-a2a-broker",
+    version: "2.0.0",
+    network: NETWORK,
+    payout_address: PAY_TO,
+    upstream_router: AGENT402_ORIGIN,
+    ...publicState(),
+  });
 });
-server.listen(PORT,'0.0.0.0',()=>console.log(`capi2-a2a listening on ${PORT}`));
+
+app.get("/.well-known/agent.json", (_req, res) => {
+  res.json({
+    name: "capi2 Agent Commerce Broker",
+    protocol: "capi2.commerce-broker/0.1",
+    description: "Buyer pays capi2 once; capi2 buys a bounded upstream x402 route and relays the result with a transparent receipt.",
+    free: {
+      health: "/health",
+      manifest: "/.well-known/agent.json",
+      x402: "/.well-known/x402",
+    },
+    tiers: Object.fromEntries(
+      Object.entries(TIERS).map(([name, tier]) => [
+        name,
+        {
+          method: "POST",
+          path: tier.path,
+          buyer_price_usd: tier.buyerPriceUsd,
+          upstream_route_price_usd: tier.upstreamPriceUsd,
+          underlying_max_usd: tier.underlyingMaxUsd,
+          capi2_margin_usd: tier.capi2MarginUsd,
+        },
+      ]),
+    ),
+    execution_state: publicState(),
+  });
+});
+
+app.get("/.well-known/x402", (_req, res) => {
+  res.json({
+    name: "capi2 Agent Commerce Broker",
+    description: "Bounded x402 broker execution through the existing agent-service market.",
+    protocol: "x402",
+    network: NETWORK,
+    asset: "USDC",
+    payTo: PAY_TO,
+    resources: Object.entries(TIERS).map(([name, tier]) => ({
+      name: `capi2 broker ${name} tier`,
+      endpoint: `POST ${tier.path}`,
+      method: "POST",
+      price_usd: tier.buyerPriceUsd,
+      summary: `Route and execute a task through a proven upstream x402 service; capi2 margin $${tier.capi2MarginUsd.toFixed(3)}.`,
+    })),
+    free_endpoints: ["/health", "/.well-known/agent.json", "/.well-known/x402"],
+  });
+});
+
+function validateInput(body, tier) {
+  const task = typeof body?.task === "string" ? body.task.trim() : "";
+  if (task.length < 3 || task.length > 400) return { error: "task_must_be_3_to_400_chars" };
+  const params = body?.params == null ? {} : body.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) return { error: "params_must_be_object" };
+  const requestedMax = Number(body?.maxUsd);
+  const maxUsd = Number.isFinite(requestedMax) && requestedMax > 0
+    ? Math.min(requestedMax, tier.underlyingMaxUsd)
+    : tier.underlyingMaxUsd;
+  return { task, params, maxUsd };
+}
+
+function makeHandler(tierName) {
+  const tier = TIERS[tierName];
+  return async (req, res) => {
+    const parsed = validateInput(req.body, tier);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+    if (!BROKER_ENABLED || !payFetch || !spendingAccount) {
+      return res.status(503).json({
+        error: "broker_spending_not_enabled",
+        message: "The inbound paid route is configured, but outbound spending remains fail-closed until the dedicated broker wallet is funded and enabled.",
+        broker: publicState(),
+      });
+    }
+
+    const reservation = reserveSpend(tier.upstreamPriceUsd);
+    if (!reservation.ok) {
+      return res.status(503).json({
+        error: reservation.reason,
+        broker: publicState(),
+      });
+    }
+
+    const upstreamUrl = `${AGENT402_ORIGIN}${tier.upstreamPath}`;
+    const upstreamBody = {
+      task: parsed.task,
+      params: parsed.params,
+      include: "external",
+      maxUsd: parsed.maxUsd,
+    };
+
+    try {
+      const upstream = await payFetch(upstreamUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "capi2-a2a-broker/2.0",
+          ...(req.get("idempotency-key") ? { "idempotency-key": `capi2:${req.get("idempotency-key")}` } : {}),
+        },
+        body: JSON.stringify(upstreamBody),
+      });
+
+      const upstreamPayload = await readResponse(upstream);
+      if (!upstream.ok) {
+        reservation.release(false);
+        return res.status(424).json({
+          error: "upstream_execution_failed",
+          upstream_status: upstream.status,
+          upstream: upstreamPayload,
+          broker: publicState(),
+        });
+      }
+
+      reservation.release(true);
+      const settlementHeader =
+        upstream.headers.get("payment-response") ||
+        upstream.headers.get("x-payment-response") ||
+        upstream.headers.get("PAYMENT-RESPONSE");
+
+      return res.json({
+        protocol: "capi2.commerce_execution/0.1",
+        status: "delivered",
+        task: parsed.task,
+        result: upstreamPayload,
+        receipt: {
+          tier: tierName,
+          buyer_price_usd: tier.buyerPriceUsd,
+          upstream_route_price_usd: tier.upstreamPriceUsd,
+          capi2_margin_usd: tier.capi2MarginUsd,
+          underlying_max_usd: tier.underlyingMaxUsd,
+          upstream: AGENT402_ORIGIN,
+          upstream_path: tier.upstreamPath,
+          upstream_settlement: decodePaymentResponse(settlementHeader),
+        },
+        broker: publicState(),
+      });
+    } catch (error) {
+      reservation.release(false);
+      return res.status(502).json({
+        error: "upstream_transport_or_payment_error",
+        detail: String(error?.message || error).slice(0, 500),
+        broker: publicState(),
+      });
+    }
+  };
+}
+
+app.post(TIERS.base.path, makeHandler("base"));
+app.post(TIERS.plus.path, makeHandler("plus"));
+
+app.use((_req, res) => res.status(404).json({ error: "not_found" }));
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`capi2-a2a-broker listening on ${PORT}`);
+  console.log(`broker enabled=${BROKER_ENABLED} spendingWallet=${spendingAccount?.address || "not-configured"} budget=$${DAILY_BUDGET_USD}`);
+});
