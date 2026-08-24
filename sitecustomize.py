@@ -1,7 +1,10 @@
 """capi2 x402 runtime compatibility and one-shot directory distribution.
 
 Loaded when the repo root is on PYTHONPATH. It:
+- keeps the intelligence lane inside low-cost buyer/router caps by default;
 - mirrors canonical x402 v2 PaymentRequired into API 402 JSON bodies while preserving PAYMENT-REQUIRED;
+- publishes an explicit machine-readable x402 payment guide and OpenAPI buyer instructions;
+- records successful/failing settlements as structured runtime evidence including tx/reference and route;
 - enriches FastAPI OpenAPI with x402scan-style discovery metadata;
 - exposes a temporary 402 Index domain-verification route;
 - runs explicitly gated one-shot free directory submissions/claims.
@@ -18,6 +21,47 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
+
+# Keep the high-intent intelligence tools inside common micro-purchase router caps.
+# An explicit Render env var still wins when intentionally configured.
+os.environ.setdefault("CAPI2_INTELLIGENCE_TOOL_PRICE", "$0.005")
+
+
+def _payment_guide_for(title: str) -> dict:
+    is_claim = "Claim Verify" in title
+    return {
+        "protocol": "x402",
+        "version": 2,
+        "signup_required": False,
+        "api_key_required": False,
+        "asset": "USDC",
+        "network": "eip155:8453",
+        "network_name": "Base",
+        "headers": {
+            "challenge": "PAYMENT-REQUIRED",
+            "payment": "PAYMENT-SIGNATURE",
+            "settlement": "PAYMENT-RESPONSE",
+        },
+        "flow": [
+            "POST the JSON request without payment.",
+            "If HTTP 402 is returned, read/decode PAYMENT-REQUIRED and choose a compatible accepts entry.",
+            "Use a funded x402 v2-compatible Base/USDC wallet/client to sign the required exact payment authorization.",
+            "Retry the same HTTP method, URL and JSON body with the resulting PAYMENT-SIGNATURE header.",
+            "On successful verification, execution and settlement, receive HTTP 2xx and read PAYMENT-RESPONSE for settlement evidence.",
+        ],
+        "buyer_requirements": [
+            "A funded wallet/client that supports x402 v2 exact payments on Base USDC.",
+            "Enough USDC for the selected route price.",
+            "The ability to retry the same request with PAYMENT-SIGNATURE.",
+        ],
+        "catalog": (
+            "https://capi2-claim-verify.onrender.com/.well-known/x402"
+            if is_claim
+            else "https://capi2-demand-tools.onrender.com/v1/catalog"
+        ),
+        "note": "Directory/health probes often stop at 402 by design; only a funded buyer can produce the paid retry and 2xx settlement.",
+    }
 
 
 def _install_fastapi_discovery_support() -> None:
@@ -40,12 +84,26 @@ def _install_fastapi_discovery_support() -> None:
                 return PlainTextResponse("not configured\n", status_code=404)
             return PlainTextResponse(value + "\n", status_code=200)
 
+        async def payment_guide():
+            return _payment_guide_for(str(getattr(self, "title", "")))
+
         self.add_api_route(
             "/.well-known/402index-verify.txt",
             verification_file,
             methods=["GET"],
             include_in_schema=False,
             response_class=PlainTextResponse,
+        )
+        self.add_api_route(
+            "/v1/payment-guide",
+            payment_guide,
+            methods=["GET"],
+            tags=["x402", "payment", "buyer guide"],
+            summary="How an autonomous buyer completes an x402 payment",
+            description=(
+                "Machine-readable flow for 402 -> PAYMENT-REQUIRED -> funded Base/USDC signing -> "
+                "PAYMENT-SIGNATURE retry -> 2xx + PAYMENT-RESPONSE. No signup or API key is required."
+            ),
         )
 
         original_openapi = self.openapi
@@ -60,20 +118,34 @@ def _install_fastapi_discovery_support() -> None:
             if "Claim Verify" in title:
                 guidance = (
                     "Use POST /v1/claim-verify for evidence-backed vendor/product/security/procurement "
-                    "claim verification. Send a public vendor_url and exact claim. Unpaid calls return "
-                    "x402 v2 402; pay USDC on Base and retry for evidence, verdict and confidence."
+                    "claim verification. No signup or API key is required. Send a public vendor_url and exact "
+                    "claim. An unpaid request returns x402 v2 HTTP 402 with PAYMENT-REQUIRED; use a funded "
+                    "Base/USDC x402 client to sign the payment, retry the exact request with PAYMENT-SIGNATURE, "
+                    "then read PAYMENT-RESPONSE on the successful 2xx for settlement evidence. See /v1/payment-guide."
                 )
             elif "Agent Utilities" in title or "Demand Microtools" in title:
                 guidance = (
-                    "Use the paid POST routes for live public web/API lookup, DNS/RDAP/TLS domain "
-                    "intelligence, API/OpenAPI discovery audits, evidence extraction, x402 seller health, "
-                    "or deterministic hashing/encoding/JWT/JSON utilities. Each operation publishes its "
-                    "own x402 price and input schema. Private/reserved network targets are blocked."
+                    "Use the paid POST routes for live public web/API lookup, DNS/RDAP/TLS domain intelligence, "
+                    "API/OpenAPI discovery audits, evidence extraction, x402 seller health, or deterministic "
+                    "utilities. No signup or API key is required. Each operation publishes its own x402 price "
+                    "and input schema. On HTTP 402 read PAYMENT-REQUIRED, sign with a funded Base/USDC x402 v2 "
+                    "client, retry the exact request with PAYMENT-SIGNATURE, and read PAYMENT-RESPONSE on 2xx. "
+                    "See /v1/payment-guide. Private/reserved network targets are blocked."
                 )
 
             if guidance:
                 info = schema.setdefault("info", {})
                 info["x-guidance"] = guidance
+                info["x-payment-guide"] = "/v1/payment-guide"
+                info["x-payment-flow"] = {
+                    "challengeHeader": "PAYMENT-REQUIRED",
+                    "paymentHeader": "PAYMENT-SIGNATURE",
+                    "settlementHeader": "PAYMENT-RESPONSE",
+                    "network": "eip155:8453",
+                    "asset": "USDC",
+                    "signupRequired": False,
+                    "apiKeyRequired": False,
+                }
                 info.setdefault("contact", {})["email"] = "capi2@agentmail.to"
 
                 for path_item in schema.get("paths", {}).values():
@@ -88,10 +160,16 @@ def _install_fastapi_discovery_support() -> None:
                     amount = str(raw_price).lstrip("$")
                     operation["x-payment-info"] = {
                         "price": {"mode": "fixed", "currency": "USD", "amount": amount},
-                        "protocols": [{"x402": {}}],
+                        "network": "eip155:8453",
+                        "asset": "USDC",
+                        "protocols": [{"x402": {"version": 2}}],
+                        "challengeHeader": "PAYMENT-REQUIRED",
+                        "paymentHeader": "PAYMENT-SIGNATURE",
+                        "settlementHeader": "PAYMENT-RESPONSE",
+                        "paymentGuide": "/v1/payment-guide",
                     }
                     operation.setdefault("responses", {}).setdefault(
-                        "402", {"description": "Payment Required"}
+                        "402", {"description": "Payment Required; read PAYMENT-REQUIRED and retry with PAYMENT-SIGNATURE"}
                     )
 
                 self.openapi_schema = schema
@@ -133,8 +211,87 @@ def _install_x402_body_mirror() -> None:
     print("x402-body-mirror: installed", flush=True)
 
 
+def _install_settlement_evidence_logger() -> None:
+    """Log route-aware settlement evidence from the SDK's async HTTP settlement boundary."""
+    try:
+        from x402.http.x402_http_server import x402HTTPResourceServer
+    except Exception as exc:
+        print(f"x402-settlement-logger: unavailable {type(exc).__name__}: {exc}", flush=True)
+        return
+
+    original = x402HTTPResourceServer.process_settlement
+    if getattr(original, "_capi2_settlement_logger", False):
+        return
+
+    async def wrapped(
+        self,
+        payment_payload,
+        requirements,
+        context=None,
+        settlement_overrides=None,
+        declared_extensions=None,
+        transport_context=None,
+        *,
+        before_handler_settlement=None,
+        phase=None,
+    ):
+        result = await original(
+            self,
+            payment_payload,
+            requirements,
+            context=context,
+            settlement_overrides=settlement_overrides,
+            declared_extensions=declared_extensions,
+            transport_context=transport_context,
+            before_handler_settlement=before_handler_settlement,
+            phase=phase,
+        )
+        try:
+            settle_response = getattr(result, "settle_response", None)
+            transaction = getattr(result, "transaction", None) or getattr(settle_response, "transaction", None)
+            network = getattr(result, "network", None) or getattr(settle_response, "network", None) or getattr(requirements, "network", None)
+            payer = getattr(result, "payer", None) or getattr(settle_response, "payer", None)
+            amount_atomic = getattr(settle_response, "amount", None) or getattr(requirements, "amount", None)
+            asset = getattr(requirements, "asset", None)
+            pay_to = getattr(requirements, "pay_to", None)
+            path = getattr(context, "path", None) if context is not None else None
+            resource = getattr(getattr(payment_payload, "resource", None), "url", None)
+            success = bool(getattr(result, "success", False))
+            amount_usdc = None
+            if amount_atomic is not None and str(asset).lower() == "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913":
+                try:
+                    amount_usdc = int(str(amount_atomic)) / 1_000_000
+                except (TypeError, ValueError):
+                    amount_usdc = None
+            evidence = {
+                "event": "x402_settlement",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "success": success,
+                "phase": phase or "after-handler",
+                "path": path,
+                "resource": resource,
+                "transaction": transaction,
+                "network": str(network) if network is not None else None,
+                "payer": payer,
+                "asset": asset,
+                "amount_atomic": str(amount_atomic) if amount_atomic is not None else None,
+                "amount_usdc": amount_usdc,
+                "pay_to": pay_to,
+                "error_reason": getattr(result, "error_reason", None) or getattr(settle_response, "error_reason", None),
+            }
+            print("capi2-settlement: " + json.dumps(evidence, sort_keys=True, separators=(",", ":")), flush=True)
+        except Exception as exc:
+            print(f"capi2-settlement-log-error: {type(exc).__name__}: {exc}", flush=True)
+        return result
+
+    wrapped._capi2_settlement_logger = True
+    x402HTTPResourceServer.process_settlement = wrapped
+    print("x402-settlement-logger: installed", flush=True)
+
+
 _install_fastapi_discovery_support()
 _install_x402_body_mirror()
+_install_settlement_evidence_logger()
 
 
 def _service_domain() -> str | None:
@@ -151,7 +308,7 @@ def _post_json(url: str, payload: dict, label: str, *, redact: bool = False) -> 
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/2.1"},
+        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/2.2"},
         method="POST",
     )
     try:
@@ -182,7 +339,7 @@ def _env_price(name: str, default: float) -> float:
 def _registrations() -> list[dict]:
     demand = "https://capi2-demand-tools.onrender.com"
     claim_price = _env_price("CAPI2_CLAIM_VERIFY_PRICE", 0.01)
-    intel_price = _env_price("CAPI2_INTELLIGENCE_TOOL_PRICE", 0.01)
+    intel_price = _env_price("CAPI2_INTELLIGENCE_TOOL_PRICE", 0.005)
     micro_price = _env_price("CAPI2_DEMAND_TOOL_PRICE", 0.001)
     rows = [
         {"url": "https://capi2-claim-verify.onrender.com/v1/claim-verify", "name": "capi2 Claim Verify",
