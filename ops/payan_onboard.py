@@ -18,6 +18,14 @@ MAX_BIDS_PER_DAY = int(os.getenv("CAPI2_MAX_BIDS_PER_DAY", "5"))
 PROVIDER_API_KEY = os.getenv("PAYANAGENT_API_KEY")
 PROVIDER_AGENT_ID = os.getenv("PAYANAGENT_AGENT_ID")
 ALLOW_PROVIDER_REGISTRATION = os.getenv("CAPI2_ALLOW_PROVIDER_REGISTRATION", "false").lower() == "true"
+LEGACY_PROVIDER_AGENT_IDS = {
+    value.strip()
+    for value in os.getenv(
+        "CAPI2_LEGACY_PROVIDER_AGENT_IDS",
+        "j5722ms4nx6zy2e6mkmcm5xqrn8d2jtc,j57a4azbt4e2620g6mj0mhdnfd8d3e0w",
+    ).split(",")
+    if value.strip()
+}
 
 COORDINATION_ONLY_PHRASES = (
     "coordination only",
@@ -143,12 +151,7 @@ def already_bid_remotely(request_id):
     bids = r.json().get("bids", [])
     for bid in bids:
         bidder_id = bid.get("bidderId")
-        if str(bidder_id) == str(state.get("agentId")):
-            return True
-        if not bidder_id:
-            continue
-        agent = requests.get(f"{BASE}/api/v1/agents/{bidder_id}", timeout=20)
-        if agent.ok and str(agent.json().get("walletAddress", "")).lower() == WALLET.lower():
+        if str(bidder_id) == str(state.get("agentId")) or str(bidder_id) in LEGACY_PROVIDER_AGENT_IDS:
             return True
     return False
 
