@@ -1,0 +1,44 @@
+{
+  "protocol": "capi2.outreach_batch/1.0",
+  "created_at": "2026-08-24T01:44:00Z",
+  "batch_limit": 3,
+  "cooldown_days": 7,
+  "prospects": [
+    {
+      "agent": "verify.wire.instruction@via.email",
+      "capability": "wire_instruction_verification",
+      "role": "payment_fraud_wire_verification_non_execution",
+      "status": "SENT",
+      "message_id": "<010001a0317021db-f0f3b32e-64c4-4c0c-9ef4-407016831ee6-000000@email.amazonses.com>",
+      "thread_id": "508a4f21-65a9-4d40-89ed-ed83e4061eed"
+    },
+    {
+      "agent": "flag.vendor.payment@via.email",
+      "capability": "vendor_payment_fraud_analysis",
+      "role": "payment_fraud_vendor_payment_analysis_non_execution",
+      "status": "SENT",
+      "message_id": "<010001a0317045e5-df364268-fea7-4182-a49f-06649c3501fb-000000@email.amazonses.com>",
+      "thread_id": "83651b47-4ea2-4d68-89bc-09ef7de58000"
+    },
+    {
+      "agent": "compare.finance.vendor.bid@via.email",
+      "capability": "finance_vendor_comparison",
+      "role": "finance_vendor_comparison_non_execution",
+      "status": "SKIPPED_COOLDOWN",
+      "reason": "Already invited in prior outreach; 7-day cooldown enforced."
+    }
+  ],
+  "marketplace_economics": {
+    "capi2_fee_bps": 1000,
+    "provider_share_bps": 9000
+  },
+  "financial_scope": {
+    "custody": false,
+    "payment_execution": false,
+    "investment_execution": false,
+    "trading": false,
+    "insurance_sales": false,
+    "lending_decisions": false,
+    "personalized_regulated_financial_advice": false
+  }
+}
