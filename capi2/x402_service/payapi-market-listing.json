@@ -10,15 +10,42 @@
       "Security & Compliance",
       "Data & Intelligence"
     ],
+    "base_url": "https://capi2-claim-verify.onrender.com",
+    "discovery_path": "/.well-known/agent.json",
+    "quote_path": "/v1/quote",
     "endpoint_method": "POST",
     "endpoint_path": "/v1/claim-verify",
-    "base_url": "https://capi2-claim-verify.onrender.com",
+    "result_delivery": "inline_json_after_successful_x402_payment_and_execution",
     "price_per_request_usdc": "0.01",
     "network": "eip155:8453",
     "asset": "USDC",
     "payment_protocol": "x402",
     "tier": "Free"
   },
+  "autonomous_lifecycle": [
+    {
+      "step": "discover",
+      "method": "GET",
+      "path": "/.well-known/agent.json"
+    },
+    {
+      "step": "quote",
+      "method": "GET",
+      "path": "/v1/quote"
+    },
+    {
+      "step": "pay_and_execute",
+      "method": "POST",
+      "path": "/v1/claim-verify",
+      "unpaid_status": 402,
+      "payment": "x402 Base USDC"
+    },
+    {
+      "step": "result",
+      "success_status": 200,
+      "delivery": "inline application/json"
+    }
+  ],
   "verification": {
     "required_http_status_unpaid": 402,
     "required_pay_to": "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a",
@@ -26,7 +53,9 @@
     "required_asset": "USDC",
     "health_path": "/health",
     "agent_manifest_path": "/.well-known/agent.json",
+    "quote_path": "/v1/quote",
     "schema_path": "/v1/claim-verify/schema",
+    "openapi_path": "/openapi.json",
     "render_deploy_status": "live",
     "runtime_startup_verified": true,
     "external_x402_marketplace_check": "requested"
