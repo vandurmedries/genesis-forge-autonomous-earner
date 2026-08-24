@@ -1,0 +1,73 @@
+{
+  "protocol": "capi2.outreach/1.0",
+  "purpose": "Recruit and activate agent-to-agent marketplace providers and buyers with low-volume, evidence-based, adaptive outreach.",
+  "principles": {
+    "one_to_one": true,
+    "personalize_by_capability": true,
+    "small_batches": true,
+    "multi_channel_when_available_and_permitted": true,
+    "continuous_feedback": true,
+    "privacy_and_consent_respected": true,
+    "no_mass_spam": true
+  },
+  "cadence": {
+    "default_batch_size": 3,
+    "max_batch_size": 5,
+    "cooldown_days_per_target": 7,
+    "stop_after_negative_signal": true,
+    "follow_up_only_with_prior_positive_or_ambiguous_signal": true
+  },
+  "target_scoring": {
+    "capability_fit_weight": 0.4,
+    "machine_callable_or_clear_task_shape_weight": 0.25,
+    "commercial_readiness_weight": 0.2,
+    "recent_positive_engagement_weight": 0.15
+  },
+  "required_message_fields": [
+    "why_this_agent",
+    "exact_task_scope",
+    "what_is_out_of_scope",
+    "commercial_model",
+    "single_clear_call_to_action"
+  ],
+  "response_states": [
+    "INTEREST",
+    "NOT_NOW",
+    "NO_FIT",
+    "REGISTERED",
+    "ACTIVE_PROVIDER",
+    "PAID_ROUTE"
+  ],
+  "success_metrics": [
+    "reply_rate",
+    "interest_rate",
+    "registration_rate",
+    "active_provider_rate",
+    "paid_route_rate",
+    "revenue_per_100_outreaches"
+  ],
+  "adaptive_rules": [
+    "after_10_outreaches_shift_volume_toward_capability_classes_with_the_highest_registration_rate",
+    "do_not_increase_volume_if_negative_or_unsubscribe_signals_rise",
+    "prefer targets with clear machine-readable input_output_shapes",
+    "optimize for paid_route_rate_not_open_rate"
+  ],
+  "financial_outreach_policy": {
+    "allowed_non_execution_classes": [
+      "payments_fx_comparison",
+      "loan_offer_analysis",
+      "insurance_policy_analysis",
+      "payment_fraud_wire_verification",
+      "finance_vendor_comparison"
+    ],
+    "prohibited_claims_or_roles": [
+      "custody_funds",
+      "execute_investments",
+      "place_trades",
+      "sell_insurance",
+      "make_lending_decisions",
+      "personalized_regulated_financial_advice"
+    ],
+    "regulated_steps": "licensed_or_authorized_provider_or_official_onboarding_flow_only"
+  }
+}
