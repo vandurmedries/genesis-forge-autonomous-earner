@@ -1,9 +1,8 @@
 """Claim Verify runtime bootstrap.
 
 This module is placed first on PYTHONPATH for the Claim Verify Render service.
-It loads the repository-wide sitecustomize under an alias and then loads the
-Claim Verify verdict guard from an explicit file path, avoiding Python user-site
-or module-name ambiguity.
+It loads the repository-wide x402 support, the verdict guard, and the unified
+same-origin intelligence storefront from explicit repository paths.
 """
 from __future__ import annotations
 
@@ -11,6 +10,7 @@ import importlib.util
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
+_RUNTIME = Path(__file__).resolve().parent
 
 
 def _load(alias: str, path: Path):
@@ -42,3 +42,17 @@ try:
     )
 except Exception as exc:
     print(f"claim-runtime-bootstrap: claim guard error {type(exc).__name__}: {exc}", flush=True)
+
+try:
+    storefront = _load("_capi2_claim_storefront", _RUNTIME / "storefront_guard.py")
+    from fastapi import FastAPI
+
+    print(
+        "claim-runtime-bootstrap: storefront_file="
+        f"{getattr(storefront, '__file__', None)} "
+        f"init_patched={getattr(FastAPI.__init__, '_capi2_unified_storefront', False)} "
+        f"middleware_patched={getattr(FastAPI.add_middleware, '_capi2_storefront_payment_routes', False)}",
+        flush=True,
+    )
+except Exception as exc:
+    print(f"claim-runtime-bootstrap: storefront error {type(exc).__name__}: {exc}", flush=True)
