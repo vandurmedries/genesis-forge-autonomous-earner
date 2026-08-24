@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -100,6 +101,11 @@ def detect_capability(title, description):
     if any(x in text for x in COORDINATION_ONLY_PHRASES):
         return None
 
+    if "catalog endpoint-health checker" in title_text or (
+        "catalog" in title_text and "health checker" in title_text
+    ):
+        return "catalog_health"
+
     # Require the requested operation in the title. Descriptions often contain
     # incidental hashes, benchmarks, or examples that are not the deliverable.
     if ("canonical" in title_text or "canonicalize" in title_text) and "json" in title_text:
@@ -118,6 +124,8 @@ def detect_capability(title, description):
 
 
 def has_solvable_input(req, capability):
+    if capability == "catalog_health":
+        return True
     payload = parse_payload(req.get("inputPayload"))
     if payload is None:
         return False
@@ -153,10 +161,11 @@ def bid_message(capability):
         "base64_decode": "Base64 decoding",
         "jwt_decode": "JWT header/payload decoding without signature verification",
         "json_canonicalize": "canonical JSON + SHA-256 fingerprinting",
+        "catalog_health": "a no-payment endpoint health report for the top PayanAgent catalog offers",
     }
     return (
         f"capi2 can deliver this automatically as deterministic {labels[capability]}. "
-        "No model guesswork; machine-readable JSON output. Bid is 1 cent USDC and delivery is normally under 60 seconds after acceptance."
+        "No model guesswork; machine-readable JSON output. Bid is 1 cent USDC and delivery is automated after acceptance."
     )
 
 
@@ -232,6 +241,8 @@ def get_text_value(payload, *keys):
 
 
 def solve(capability, payload):
+    if capability == "catalog_health":
+        return run_catalog_health_check()
     if capability == "sha256":
         text = get_text_value(payload, "text", "input", "value", "data")
         if text is None:
@@ -271,6 +282,54 @@ def solve(capability, payload):
         canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return {"canonical": canonical, "sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
     raise ValueError("unsupported capability")
+
+
+def run_catalog_health_check(limit=100):
+    offers = []
+    cursor = None
+    while len(offers) < limit:
+        params = {"sort": "top", "limit": min(100, limit - len(offers))}
+        if cursor:
+            params["cursor"] = cursor
+        response = requests.get(f"{BASE}/api/v1/offers", params=params, timeout=20)
+        response.raise_for_status()
+        page = response.json()
+        rows = page.get("offers", [])
+        offers.extend(rows)
+        cursor = page.get("nextCursor")
+        if not cursor or not rows:
+            break
+
+    def probe(offer):
+        offer_id = offer.get("_id") or offer.get("id")
+        endpoint = offer.get("buyUrl") or (f"/x402/{offer_id}" if offer_id else None)
+        url = endpoint if str(endpoint).startswith("http") else f"{BASE}{endpoint}"
+        started = time.monotonic()
+        try:
+            response = requests.options(url, timeout=5, allow_redirects=True)
+            elapsed = round((time.monotonic() - started) * 1000)
+            code = response.status_code
+            status = "alive" if code < 500 else "5xx"
+            if code == 408:
+                status = "timeout"
+            elif 400 <= code < 500 and code != 402:
+                status = "4xx"
+            return {"offerId": offer_id, "title": offer.get("title"), "endpoint": url, "status": status, "httpCode": code, "latencyMs": elapsed}
+        except requests.Timeout:
+            return {"offerId": offer_id, "title": offer.get("title"), "endpoint": url, "status": "timeout", "httpCode": None, "latencyMs": round((time.monotonic() - started) * 1000)}
+        except requests.RequestException:
+            return {"offerId": offer_id, "title": offer.get("title"), "endpoint": url, "status": "dead", "httpCode": None, "latencyMs": round((time.monotonic() - started) * 1000)}
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        results = list(pool.map(probe, offers[:limit]))
+    counts = {name: sum(1 for row in results if row["status"] == name) for name in ("alive", "dead", "timeout", "4xx", "5xx")}
+    return {
+        "generatedAt": now_iso(),
+        "offersChecked": len(results),
+        "counts": counts,
+        "summaryMarkdown": f"Checked {len(results)} offers: {counts['alive']} alive; {len(results) - counts['alive']} require review.",
+        "results": results,
+    }
 
 
 def maybe_fulfill(request_id, capability):
