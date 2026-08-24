@@ -13,6 +13,9 @@ PORT = int(os.getenv("PORT", "10000"))
 PUBLIC_ORIGIN = os.getenv("CAPI2_PUBLIC_ORIGIN", "https://capi2-payan-native.onrender.com").rstrip("/")
 RELAY_TOKEN = os.environ["CAPI2_NATIVE_RELAY_TOKEN"]
 WALLET = "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a"
+SELLER_API_KEY = os.getenv("PAYANAGENT_NATIVE_API_KEY")
+SELLER_AGENT_ID = os.getenv("PAYANAGENT_NATIVE_AGENT_ID")
+ALLOW_SELLER_REGISTRATION = os.getenv("CAPI2_ALLOW_SELLER_REGISTRATION", "false").lower() == "true"
 
 OFFERS = [
     {
@@ -135,11 +138,26 @@ def ensure_offers():
     existing = catalog_titles()
     if wanted.issubset(existing):
         state["offers"] = [{"title": t, "offerId": existing[t].get("_id"), "buyUrl": existing[t].get("buyUrl")} for t in sorted(wanted)]
+        seller_ids = {existing[t].get("sellerId") for t in wanted if existing[t].get("sellerId")}
+        state["sellerAgentId"] = next(iter(seller_ids)) if len(seller_ids) == 1 else None
+        if len(seller_ids) > 1:
+            state["errors"].append("catalog:offers_split_across_multiple_sellers")
         state.update(ok=True, status="already_listed")
         print(f"payan native: already_listed offers={len(state['offers'])}", flush=True)
         return
 
-    reg_payload = {
+    key = SELLER_API_KEY
+    state["sellerAgentId"] = SELLER_AGENT_ID
+    if not key or not SELLER_AGENT_ID:
+        if not ALLOW_SELLER_REGISTRATION:
+            state["status"] = "seller_identity_missing"
+            state["errors"].append(
+                "set PAYANAGENT_NATIVE_API_KEY and PAYANAGENT_NATIVE_AGENT_ID; "
+                "automatic registration is disabled to prevent duplicate sellers"
+            )
+            print("payan native: seller_identity_missing; registration disabled", flush=True)
+            return
+        reg_payload = {
         "name": "capi2 Native Utility APIs",
         "description": "Deterministic paid utility APIs for hashing, Base64, JWT inspection and canonical JSON fingerprints. Hosted for PayanAgent native x402 settlement.",
         "walletAddress": WALLET,
@@ -147,20 +165,20 @@ def ensure_offers():
         "tags": ["sha256", "sha512", "base64", "jwt", "json", "agent-tools"],
         "providerType": "api",
         "agentUrl": PUBLIC_ORIGIN,
-    }
-    r = requests.post(f"{BASE}/api/v1/agents", json=reg_payload, timeout=25)
-    if not r.ok:
-        state["status"] = "registration_failed"
-        state["errors"].append(f"register:{r.status_code}:{r.text[:220]}")
-        print(f"payan native: registration_failed status={r.status_code}", flush=True)
-        return
-    reg = r.json()
-    key = reg.get("apiKey")
-    state["sellerAgentId"] = reg.get("agentId")
-    if not key:
-        state["status"] = "registration_failed"
-        state["errors"].append("register:no_api_key")
-        return
+        }
+        r = requests.post(f"{BASE}/api/v1/agents", json=reg_payload, timeout=25)
+        if not r.ok:
+            state["status"] = "registration_failed"
+            state["errors"].append(f"register:{r.status_code}:{r.text[:220]}")
+            print(f"payan native: registration_failed status={r.status_code}", flush=True)
+            return
+        reg = r.json()
+        key = reg.get("apiKey")
+        state["sellerAgentId"] = reg.get("agentId")
+        if not key:
+            state["status"] = "registration_failed"
+            state["errors"].append("register:no_api_key")
+            return
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     created = []
     for offer in OFFERS:
