@@ -11,6 +11,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
 
 BASE = "https://payanagent.com"
+CATALOG_HEALTH_REPOSITORY = "https://github.com/vandurmedries/genesis-forge-autonomous-earner"
+CATALOG_HEALTH_SCRIPT = f"{CATALOG_HEALTH_REPOSITORY}/blob/codex/capi2-buyer-seller-fix/tools/payan_catalog_health.mjs"
+CATALOG_HEALTH_SAMPLE = f"{CATALOG_HEALTH_REPOSITORY}/blob/codex/capi2-buyer-seller-fix/reports/payan-catalog-health-sample.json"
 WALLET = "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a"
 PORT = int(os.getenv("PORT", "10000"))
 SCAN_SECONDS = int(os.getenv("CAPI2_REQUEST_SCAN_SECONDS", "60"))
@@ -245,7 +248,15 @@ def get_text_value(payload, *keys):
 
 def solve(capability, payload):
     if capability == "catalog_health":
-        return run_catalog_health_check()
+        result = run_catalog_health_check()
+        result.update({
+            "repository": CATALOG_HEALTH_REPOSITORY,
+            "nodeScript": CATALOG_HEALTH_SCRIPT,
+            "sampleReport": CATALOG_HEALTH_SAMPLE,
+            "run": "node tools/payan_catalog_health.mjs > report.json 2> summary.md",
+            "probePolicy": "Unpaid OPTIONS requests only; 402 is classified alive.",
+        })
+        return result
     if capability == "sha256":
         text = get_text_value(payload, "text", "input", "value", "data")
         if text is None:
