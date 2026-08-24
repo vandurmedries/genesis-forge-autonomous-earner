@@ -151,7 +151,7 @@ def _post_json(url: str, payload: dict, label: str, *, redact: bool = False) -> 
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/2.0"},
+        headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/2.1"},
         method="POST",
     )
     try:
@@ -170,51 +170,63 @@ def _post_json(url: str, payload: dict, label: str, *, redact: bool = False) -> 
         return None, ""
 
 
+def _env_price(name: str, default: float) -> float:
+    raw = os.getenv(name, str(default)).strip().lstrip("$")
+    try:
+        value = float(raw)
+        return value if value >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
 def _registrations() -> list[dict]:
     demand = "https://capi2-demand-tools.onrender.com"
+    claim_price = _env_price("CAPI2_CLAIM_VERIFY_PRICE", 0.01)
+    intel_price = _env_price("CAPI2_INTELLIGENCE_TOOL_PRICE", 0.01)
+    micro_price = _env_price("CAPI2_DEMAND_TOOL_PRICE", 0.001)
     rows = [
         {"url": "https://capi2-claim-verify.onrender.com/v1/claim-verify", "name": "capi2 Claim Verify",
          "probe": {"vendor_url": "https://example.com/security", "claim": "Vendor states that customer data is encrypted at rest."},
          "description": "Evidence-backed vendor claim verification for AI agents and procurement workflows.",
-         "price": 0.01, "category": "ai/vendor-risk"},
+         "price": claim_price, "category": "ai/vendor-risk"},
         {"url": f"{demand}/v1/web/lookup", "name": "capi2 Live Web Lookup",
          "probe": {"url": "https://example.com", "query": "example domain"},
          "description": "Live public web/API lookup with structured metadata and relevant passages.",
-         "price": 0.01, "category": "data/web"},
+         "price": intel_price, "category": "data/web"},
         {"url": f"{demand}/v1/domain/intelligence", "name": "capi2 Domain Intelligence",
          "probe": {"domain": "example.com", "include_rdap": True},
          "description": "DNS, RDAP, HTTPS and TLS intelligence for public domains.",
-         "price": 0.01, "category": "data/domain"},
+         "price": intel_price, "category": "data/domain"},
         {"url": f"{demand}/v1/api/audit", "name": "capi2 API Discovery Audit",
          "probe": {"url": "https://capi2-demand-tools.onrender.com"},
          "description": "Audit OpenAPI, x402, agent manifests, robots, llms and health discovery.",
-         "price": 0.01, "category": "developer-tools/api-audit"},
+         "price": intel_price, "category": "developer-tools/api-audit"},
         {"url": f"{demand}/v1/evidence/extract", "name": "capi2 Evidence Extract",
          "probe": {"url": "https://example.com", "query": "example domain", "max_passages": 5},
          "description": "Extract and rank relevant evidence passages from a public webpage.",
-         "price": 0.01, "category": "data/evidence"},
+         "price": intel_price, "category": "data/evidence"},
         {"url": f"{demand}/v1/x402/health", "name": "capi2 Agent x402 Health",
          "probe": {"url": "https://capi2-demand-tools.onrender.com/v1/web/lookup"},
          "description": "x402 and agent seller discovery/health audit without attaching payment.",
-         "price": 0.01, "category": "developer-tools/x402"},
+         "price": intel_price, "category": "developer-tools/x402"},
         {"url": f"{demand}/v1/hash/sha256", "name": "capi2 SHA-256",
          "probe": {"text": "hello agent"}, "description": "Low-cost SHA-256 checksum utility.",
-         "price": 0.001, "category": "developer-tools/hashing"},
+         "price": micro_price, "category": "developer-tools/hashing"},
         {"url": f"{demand}/v1/hash/sha512", "name": "capi2 SHA-512",
          "probe": {"text": "hello agent"}, "description": "Low-cost SHA-512 checksum utility.",
-         "price": 0.001, "category": "developer-tools/hashing"},
+         "price": micro_price, "category": "developer-tools/hashing"},
         {"url": f"{demand}/v1/base64/encode", "name": "capi2 Base64 Encode",
          "probe": {"text": "hello agent"}, "description": "Low-cost Base64 encoding utility.",
-         "price": 0.001, "category": "developer-tools/encoding"},
+         "price": micro_price, "category": "developer-tools/encoding"},
         {"url": f"{demand}/v1/base64/decode", "name": "capi2 Base64 Decode",
          "probe": {"data": "aGVsbG8gYWdlbnQ=", "urlsafe": False}, "description": "Low-cost Base64 decoding utility.",
-         "price": 0.001, "category": "developer-tools/encoding"},
+         "price": micro_price, "category": "developer-tools/encoding"},
         {"url": f"{demand}/v1/jwt/decode", "name": "capi2 JWT Decode",
          "probe": {"token": "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjMifQ."}, "description": "JWT claims inspection without verification.",
-         "price": 0.001, "category": "developer-tools/auth"},
+         "price": micro_price, "category": "developer-tools/auth"},
         {"url": f"{demand}/v1/json/canonicalize", "name": "capi2 JSON Canonical",
          "probe": {"value": {"b": 2, "a": 1}}, "description": "Deterministic JSON canonicalization.",
-         "price": 0.001, "category": "developer-tools/json"},
+         "price": micro_price, "category": "developer-tools/json"},
     ]
     return rows
 
