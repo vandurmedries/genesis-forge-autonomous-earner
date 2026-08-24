@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
-from x402.extensions.bazaar import bazaar_resource_server_extension, declare_discovery_extension
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
@@ -26,44 +25,13 @@ MAX_REDIRECTS = 3
 
 app = FastAPI(
     title="capi2 Claim Verify",
-    version="1.4.0",
+    version="1.3.1",
     description="Agent-discoverable public-evidence vendor claim verification with x402 payment on Base USDC.",
 )
 
 facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
 server = x402ResourceServer(facilitator)
 server.register(NETWORK, ExactEvmServerScheme())
-server.register_extension(bazaar_resource_server_extension)
-
-claim_verify_discovery = declare_discovery_extension(
-    input={
-        "vendor_url": "https://example.com/security",
-        "claim": "Example publishes a security policy",
-    },
-    input_schema={
-        "properties": {
-            "vendor_url": {
-                "type": "string",
-                "format": "uri",
-                "description": "Public HTTP(S) source URL to inspect.",
-            },
-            "claim": {
-                "type": "string",
-                "description": "Vendor claim to check against the supplied public source.",
-            },
-            "vendor_name": {
-                "type": "string",
-                "description": "Optional vendor label for buyer-side correlation.",
-            },
-            "claim_id": {
-                "type": "string",
-                "description": "Optional buyer-provided claim identifier.",
-            },
-        },
-        "required": ["vendor_url", "claim"],
-    },
-    body_type="json",
-)
 
 routes = {
     "POST /v1/claim-verify": RouteConfig(
@@ -77,7 +45,6 @@ routes = {
         ],
         mime_type="application/json",
         description="Verify one public vendor claim against a supplied public source URL and return machine-readable evidence.",
-        extensions=claim_verify_discovery,
     )
 }
 
@@ -88,7 +55,6 @@ class ClaimVerifyRequest(BaseModel):
     vendor_url: Optional[HttpUrl] = None
     claim: Optional[str] = Field(default=None, min_length=3, max_length=1200)
 
-    # Agent-to-agent compatibility aliases used by current buyers/routers.
     context_url: Optional[HttpUrl] = None
     claim_to_verify: Optional[str] = Field(default=None, min_length=3, max_length=1200)
     claim_text: Optional[str] = Field(default=None, min_length=3, max_length=1200)
@@ -118,7 +84,7 @@ class EvidenceSnippet(BaseModel):
 
 
 class ClaimVerifyResponse(BaseModel):
-    protocol: str = "capi2.claim_verify/1.4"
+    protocol: str = "capi2.claim_verify/1.3.1"
     claim_id: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_url: str
@@ -190,7 +156,7 @@ def _validate_public_http_url(url: str) -> None:
 
 def _fetch_public_source(url: str) -> tuple[str, str]:
     current = url
-    headers = {"User-Agent": "capi2-claim-verify/1.4 (+public-evidence-check)"}
+    headers = {"User-Agent": "capi2-claim-verify/1.3.1 (+public-evidence-check)"}
 
     for _ in range(MAX_REDIRECTS + 1):
         _validate_public_http_url(current)
@@ -247,7 +213,6 @@ def _lifecycle() -> list[dict]:
             "method": "GET",
             "path": "/.well-known/agent.json",
             "payment_required": False,
-            "catalog": "x402 Bazaar discovery metadata is embedded in the paid route declaration.",
         },
         {
             "step": "quote",
@@ -287,10 +252,6 @@ def _quote() -> dict:
         "network": NETWORK,
         "payment_protocol": "x402",
         "pay_to": PAY_TO,
-        "discovery": {
-            "well_known": "/.well-known/agent.json",
-            "x402_bazaar": True,
-        },
         "execute": {
             "method": "POST",
             "path": "/v1/claim-verify",
@@ -312,12 +273,9 @@ def _quote() -> dict:
 def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "protocol": "capi2.claim_verify/1.4",
+        "protocol": "capi2.claim_verify/1.3.1",
         "description": "Verify a public vendor claim against a supplied public source URL.",
-        "discovery": {
-            "well_known": "/.well-known/agent.json",
-            "x402_bazaar": True,
-        },
+        "discovery": "/.well-known/agent.json",
         "openapi": "/openapi.json",
         "quote": {"method": "GET", "path": "/v1/quote"},
         "endpoint": {"method": "POST", "path": "/v1/claim-verify"},
@@ -351,12 +309,11 @@ async def health():
     return {
         "ok": True,
         "service": "capi2-claim-verify",
-        "version": "1.4.0",
+        "version": "1.3.1",
         "network": NETWORK,
         "price": PRICE,
         "settlement": "USDC on Base",
         "pay_to": PAY_TO,
-        "bazaar_discovery": True,
         "autonomous_flow": "discover -> quote -> x402 pay -> execute -> inline result",
     }
 
