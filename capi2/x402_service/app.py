@@ -19,6 +19,9 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
+SERVICE_VERSION = "1.5.0"
+PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
+
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
 NETWORK = os.getenv("CAPI2_X402_NETWORK", "eip155:8453")
 FACILITATOR_URL = os.getenv("CAPI2_X402_FACILITATOR", "https://facilitator.payai.network")
@@ -36,6 +39,12 @@ BUYER_QUERIES = [
     "vendor risk evidence check",
     "RFP or security questionnaire claim verification",
 ]
+
+MATCH_STOPWORDS = {
+    "about", "against", "claim", "claims", "public", "source", "states", "state",
+    "that", "their", "there", "these", "this", "vendor", "with",
+}
+NEGATORS = {"not", "no", "never", "without", "cannot", "cant", "lacks", "lacking"}
 
 CLAIM_INPUT_SCHEMA = {
     "type": "object",
@@ -61,16 +70,16 @@ CLAIM_INPUT_SCHEMA = {
 }
 
 CLAIM_OUTPUT_EXAMPLE = {
-    "protocol": "capi2.claim_verify/1.4.1",
+    "protocol": PROTOCOL_VERSION,
     "vendor_url": "https://example.com/security",
     "claim": "Vendor states that customer data is encrypted at rest.",
     "verification_status": "supported",
     "verification_result": "supported",
     "verdict": "SUPPORTED_BY_SUPPLIED_SOURCE",
     "confidence": 0.88,
-    "evidence_summary": "Example public-source evidence supporting the claim.",
+    "evidence_summary": "Customer data is encrypted at rest.",
     "evidence_source_urls": ["https://example.com/security"],
-    "evidence": [{"text": "Example evidence sentence.", "score": 0.9}],
+    "evidence": [{"text": "Customer data is encrypted at rest.", "score": 0.9}],
     "caveats": ["Checks only the supplied public URL."],
 }
 
@@ -92,24 +101,34 @@ CLAIM_OUTPUT_SCHEMA = {
         "caveats": {"type": "array", "items": {"type": "string"}},
     },
     "required": [
-        "protocol",
-        "vendor_url",
-        "claim",
-        "verification_status",
-        "verification_result",
-        "verdict",
-        "confidence",
-        "evidence_summary",
-        "evidence_source_urls",
-        "evidence",
-        "caveats",
+        "protocol", "vendor_url", "claim", "verification_status", "verification_result",
+        "verdict", "confidence", "evidence_summary", "evidence_source_urls", "evidence", "caveats",
     ],
+}
+
+DRY_RUN_FIXTURES = {
+    "supporting_evidence_with_unrelated_negation": {
+        "claim": "The API supports single sign-on (SSO).",
+        "evidence_text": (
+            "There are no setup fees for enterprise accounts, and the API supports "
+            "single sign-on (SSO) for enterprise customers."
+        ),
+        "expected_verification_status": "supported",
+        "purpose": (
+            "Regression for the 1.3.2 verdict-inversion class: unrelated negation in a "
+            "supporting sentence must not flip a supported claim to contradicted."
+        ),
+    },
+    "direct_relevant_contradiction": {
+        "claim": "The API supports single sign-on (SSO).",
+        "evidence_text": "The API does not support single sign-on (SSO).",
+        "expected_verification_status": "contradicted",
+        "purpose": "Control case proving that relevant negation still produces a contradiction.",
+    },
 }
 
 
 def _bazaar_claim_extension() -> dict:
-    output_example_schema = {"type": "object"}
-    output_example_schema.update(CLAIM_OUTPUT_SCHEMA)
     return {
         "bazaar": {
             "info": {
@@ -145,7 +164,7 @@ def _bazaar_claim_extension() -> dict:
                         "type": "object",
                         "properties": {
                             "type": {"type": "string"},
-                            "example": output_example_schema,
+                            "example": CLAIM_OUTPUT_SCHEMA,
                         },
                         "required": ["type"],
                     },
@@ -158,7 +177,7 @@ def _bazaar_claim_extension() -> dict:
 
 app = FastAPI(
     title="capi2 Claim Verify",
-    version="1.4.1",
+    version=SERVICE_VERSION,
     description=(
         "Agent-discoverable paid public-evidence verification for vendor, procurement, "
         "due-diligence, RFP, security and commercial claims using x402 on Base USDC."
@@ -171,14 +190,7 @@ server.register(NETWORK, ExactEvmServerScheme())
 
 routes = {
     "POST /v1/claim-verify": RouteConfig(
-        accepts=[
-            PaymentOption(
-                scheme="exact",
-                pay_to=PAY_TO,
-                price=PRICE,
-                network=NETWORK,
-            )
-        ],
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=PRICE, network=NETWORK)],
         resource=f"{PUBLIC_ORIGIN}/v1/claim-verify",
         mime_type="application/json",
         description=(
@@ -191,14 +203,12 @@ routes = {
         extensions=_bazaar_claim_extension(),
     )
 }
-
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 
 class ClaimVerifyRequest(BaseModel):
     vendor_url: Optional[HttpUrl] = None
     claim: Optional[str] = Field(default=None, min_length=3, max_length=1200)
-
     context_url: Optional[HttpUrl] = None
     claim_to_verify: Optional[str] = Field(default=None, min_length=3, max_length=1200)
     claim_text: Optional[str] = Field(default=None, min_length=3, max_length=1200)
@@ -228,7 +238,7 @@ class EvidenceSnippet(BaseModel):
 
 
 class ClaimVerifyResponse(BaseModel):
-    protocol: str = "capi2.claim_verify/1.4.1"
+    protocol: str = PROTOCOL_VERSION
     claim_id: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_url: str
@@ -243,11 +253,30 @@ class ClaimVerifyResponse(BaseModel):
     caveats: List[str]
 
 
+class DryRunRequest(BaseModel):
+    fixture_id: Optional[str] = None
+    claim: Optional[str] = Field(default=None, min_length=3, max_length=1200)
+    evidence_text: Optional[str] = Field(default=None, min_length=3, max_length=4000)
+
+    @model_validator(mode="after")
+    def require_fixture_or_pair(self):
+        if self.fixture_id:
+            if self.fixture_id not in DRY_RUN_FIXTURES:
+                raise ValueError(f"unknown fixture_id; choose one of: {', '.join(DRY_RUN_FIXTURES)}")
+            return self
+        if not self.claim or not self.evidence_text:
+            raise ValueError("provide fixture_id, or both claim and evidence_text")
+        return self
+
+
+def _word_list(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
 def _tokens(text: str) -> set[str]:
     return {
-        token
-        for token in re.findall(r"[a-z0-9]+", text.lower())
-        if len(token) >= 4
+        token for token in _word_list(text)
+        if len(token) >= 4 and token not in MATCH_STOPWORDS and token not in NEGATORS
     }
 
 
@@ -256,42 +285,97 @@ def _sentence_chunks(text: str) -> List[str]:
     return [re.sub(r"\s+", " ", c).strip() for c in chunks if len(c.strip()) >= 25]
 
 
-def _has_negation(text: str) -> bool:
-    normalized = f" {re.sub(r'[^a-z0-9]+', ' ', text.lower())} "
-    markers = (
-        " not ",
-        " no ",
-        " never ",
-        " without ",
-        " does not ",
-        " do not ",
-        " cannot ",
-        " is not ",
-        " are not ",
-        " lacks ",
-        " lacking ",
-    )
-    return any(marker in normalized for marker in markers)
+def _relevant_negation(text: str, target_terms: set[str]) -> bool:
+    if not target_terms:
+        return False
+    words = _word_list(text)
+    for i, word in enumerate(words):
+        if word not in target_terms:
+            continue
+        window = words[max(0, i - 3):i]
+        if any(token in NEGATORS for token in window):
+            return True
+    normalized = " ".join(words)
+    for term in target_terms:
+        if re.search(rf"\b(?:fails|failed|unable)\s+to\s+(?:\w+\s+){{0,1}}{re.escape(term)}\b", normalized):
+            return True
+    return False
+
+
+def _rank_evidence(claim: str, page_text: str) -> list[tuple[float, str]]:
+    claim_tokens = _tokens(claim)
+    if not claim_tokens:
+        raise HTTPException(status_code=422, detail="claim_has_insufficient_terms")
+    ranked: list[tuple[float, str]] = []
+    for chunk in _sentence_chunks(page_text):
+        chunk_tokens = _tokens(chunk)
+        if not chunk_tokens:
+            continue
+        overlap = len(claim_tokens & chunk_tokens)
+        score = overlap / max(len(claim_tokens), 1)
+        if overlap:
+            ranked.append((score, chunk[:420]))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked
+
+
+def _classify_claim(claim: str, evidence_text: str) -> dict:
+    ranked = _rank_evidence(claim, evidence_text)
+    top = ranked[:3]
+    best = top[0][0] if top else 0.0
+    best_text = top[0][1] if top else ""
+    claim_terms = _tokens(claim)
+    best_terms = _tokens(best_text) if best_text else set()
+    shared_terms = claim_terms & best_terms
+    claim_negated = _relevant_negation(claim, claim_terms)
+    evidence_negated = _relevant_negation(best_text, shared_terms) if best_text else False
+
+    if best >= 0.60 and claim_negated == evidence_negated:
+        verification_status = "supported"
+        verdict = "SUPPORTED_BY_SUPPLIED_SOURCE"
+    elif best >= 0.55 and claim_negated != evidence_negated:
+        verification_status = "contradicted"
+        verdict = "CONTRADICTED_BY_SUPPLIED_SOURCE"
+    else:
+        verification_status = "uncertain"
+        verdict = "NOT_CONFIRMED_OR_AMBIGUOUS"
+
+    if verification_status == "contradicted":
+        confidence = min(0.90, round(0.30 + best * 0.58, 3))
+    else:
+        confidence = min(0.95, round(0.25 + best * 0.70, 3))
+
+    evidence = [{"text": text, "score": round(score, 3)} for score, text in top]
+    return {
+        "verification_status": verification_status,
+        "verification_result": verification_status,
+        "verdict": verdict,
+        "confidence": confidence,
+        "evidence_summary": best_text or "No sufficiently overlapping public statement was found on the supplied source.",
+        "evidence": evidence,
+        "debug": {
+            "best_overlap": round(best, 3),
+            "claim_negated_near_relevant_terms": claim_negated,
+            "evidence_negated_near_relevant_terms": evidence_negated,
+            "shared_terms": sorted(shared_terms),
+        },
+    }
 
 
 def _validate_public_http_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(status_code=422, detail="source_url_must_be_public_http_or_https")
-
     hostname = parsed.hostname.rstrip(".").lower()
     if hostname == "localhost" or hostname.endswith(".local"):
         raise HTTPException(status_code=422, detail="source_url_private_host_blocked")
-
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         resolved = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise HTTPException(status_code=422, detail="source_dns_resolution_failed") from exc
-
     if not resolved:
         raise HTTPException(status_code=422, detail="source_dns_resolution_failed")
-
     for entry in resolved:
         ip = ipaddress.ip_address(entry[4][0])
         if not ip.is_global:
@@ -300,21 +384,15 @@ def _validate_public_http_url(url: str) -> None:
 
 def _fetch_public_source(url: str) -> tuple[str, str]:
     current = url
-    headers = {"User-Agent": "capi2-claim-verify/1.4.1 (+public-evidence-check)"}
-
+    headers = {"User-Agent": f"capi2-claim-verify/{SERVICE_VERSION} (+public-evidence-check)"}
     for _ in range(MAX_REDIRECTS + 1):
         _validate_public_http_url(current)
         try:
             response = requests.get(
-                current,
-                timeout=(4, 12),
-                allow_redirects=False,
-                stream=True,
-                headers=headers,
+                current, timeout=(4, 12), allow_redirects=False, stream=True, headers=headers,
             )
         except requests.RequestException as exc:
             raise HTTPException(status_code=422, detail=f"source_fetch_failed:{exc.__class__.__name__}") from exc
-
         if 300 <= response.status_code < 400:
             location = response.headers.get("location")
             response.close()
@@ -322,17 +400,14 @@ def _fetch_public_source(url: str) -> tuple[str, str]:
                 raise HTTPException(status_code=422, detail="source_redirect_without_location")
             current = urljoin(current, location)
             continue
-
         if response.status_code >= 400:
             status = response.status_code
             response.close()
             raise HTTPException(status_code=422, detail=f"source_http_status:{status}")
-
         declared_length = response.headers.get("content-length")
         if declared_length and declared_length.isdigit() and int(declared_length) > MAX_SOURCE_BYTES:
             response.close()
             raise HTTPException(status_code=422, detail="source_too_large")
-
         encoding = response.encoding or "utf-8"
         data = bytearray()
         try:
@@ -344,10 +419,15 @@ def _fetch_public_source(url: str) -> tuple[str, str]:
                     raise HTTPException(status_code=422, detail="source_too_large")
         finally:
             response.close()
-
         return current, bytes(data).decode(encoding, errors="replace")
-
     raise HTTPException(status_code=422, detail="too_many_source_redirects")
+
+
+def _extract_page_text(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+    return soup.get_text(" ", strip=True)
 
 
 def _price_usd() -> float:
@@ -360,21 +440,16 @@ def _lifecycle() -> list[dict]:
         {
             "step": "discover",
             "method": "GET",
-            "paths": [
-                "/",
-                "/.well-known/x402",
-                "/.well-known/agent.json",
-                "/openapi.json",
-                "/llms.txt",
-                "/robots.txt",
-            ],
+            "paths": ["/", "/.well-known/x402", "/.well-known/agent.json", "/openapi.json", "/llms.txt", "/robots.txt"],
             "payment_required": False,
         },
+        {"step": "quote", "method": "GET", "path": "/v1/quote", "payment_required": False},
         {
-            "step": "quote",
-            "method": "GET",
-            "path": "/v1/quote",
+            "step": "sandbox",
+            "method": "POST",
+            "path": "/v1/claim-verify/dry-run",
             "payment_required": False,
+            "behavior": "Free text-only regression/sandbox classifier. It does not fetch external URLs.",
         },
         {
             "step": "pay",
@@ -386,26 +461,18 @@ def _lifecycle() -> list[dict]:
             "step": "execute",
             "method": "POST",
             "path": "/v1/claim-verify",
-            "behavior": "After x402 verification/settlement, capi2 executes the requested claim-verification task.",
+            "behavior": "After x402 verification/settlement, capi2 fetches the supplied public URL and evaluates evidence.",
         },
-        {
-            "step": "result",
-            "mode": "inline",
-            "success_status": 200,
-            "content_type": "application/json",
-        },
+        {"step": "result", "mode": "inline", "success_status": 200, "content_type": "application/json"},
     ]
 
 
 def _quote() -> dict:
     return {
-        "protocol": "capi2.quote/1.1",
+        "protocol": "capi2.quote/1.2",
         "service": "claim_verify",
         "service_name": "capi2 Claim Verify",
-        "description": (
-            "Verify one vendor, product, compliance, security, procurement or commercial claim "
-            "against one supplied public source URL."
-        ),
+        "description": "Verify one vendor, product, compliance, security, procurement or commercial claim against one supplied public source URL.",
         "price": PRICE,
         "asset": "USDC",
         "network": NETWORK,
@@ -424,12 +491,14 @@ def _quote() -> dict:
                 "claim": "Vendor states that customer data is encrypted at rest.",
             },
         },
-        "result": {
-            "mode": "inline",
-            "success_status": 200,
-            "content_type": "application/json",
-            "example": CLAIM_OUTPUT_EXAMPLE,
+        "sandbox": {
+            "method": "POST",
+            "url": f"{PUBLIC_ORIGIN}/v1/claim-verify/dry-run",
+            "payment_required": False,
+            "network_fetch": False,
+            "fixture_id": "supporting_evidence_with_unrelated_negation",
         },
+        "result": {"mode": "inline", "success_status": 200, "content_type": "application/json", "example": CLAIM_OUTPUT_EXAMPLE},
         "marketplace": {
             "standard_fee_bps": 1000,
             "provider_share_bps": 9000,
@@ -442,10 +511,8 @@ def _x402_manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
         "service_name": "capi2 Claim Verify",
-        "description": (
-            "Paid evidence-backed verification for vendor claims, AI/SaaS due diligence, "
-            "procurement, RFP and security workflows."
-        ),
+        "version": SERVICE_VERSION,
+        "description": "Paid evidence-backed verification for vendor claims, AI/SaaS due diligence, procurement, RFP and security workflows.",
         "homepage": PUBLIC_ORIGIN,
         "protocol": "x402",
         "network": NETWORK,
@@ -461,10 +528,7 @@ def _x402_manifest() -> dict:
                 "method": "POST",
                 "price_usd": _price_usd(),
                 "tags": BUYER_TAGS,
-                "summary": (
-                    "Verify a vendor, product, security, compliance, procurement or commercial "
-                    "claim against a supplied public source URL."
-                ),
+                "summary": "Verify a vendor, product, security, compliance, procurement or commercial claim against a supplied public source URL.",
                 "input_schema": CLAIM_INPUT_SCHEMA,
                 "example_request": {
                     "vendor_url": "https://example.com/security",
@@ -475,16 +539,9 @@ def _x402_manifest() -> dict:
             }
         ],
         "free_endpoints": [
-            "/",
-            "/health",
-            "/robots.txt",
-            "/llms.txt",
-            "/.well-known/x402",
-            "/.well-known/agent.json",
-            "/openapi.json",
-            "/v1/quote",
-            "/v1/examples",
-            "/v1/claim-verify/schema",
+            "/", "/health", "/robots.txt", "/llms.txt", "/.well-known/x402",
+            "/.well-known/agent.json", "/openapi.json", "/v1/quote", "/v1/examples",
+            "/v1/claim-verify/schema", "/v1/claim-verify/dry-run",
         ],
     }
 
@@ -492,45 +549,31 @@ def _x402_manifest() -> dict:
 def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "protocol": "capi2.claim_verify/1.4.1",
-        "description": (
-            "Evidence-backed public-source claim verification for AI agents performing vendor "
-            "risk, due diligence, procurement, RFP, security and commercial workflows."
-        ),
+        "protocol": PROTOCOL_VERSION,
+        "description": "Evidence-backed public-source claim verification for AI agents performing vendor risk, due diligence, procurement, RFP, security and commercial workflows.",
         "service_name": "capi2 Claim Verify",
         "tags": BUYER_TAGS,
         "buyer_queries": BUYER_QUERIES,
         "discovery": {
-            "x402": "/.well-known/x402",
-            "agent": "/.well-known/agent.json",
-            "openapi": "/openapi.json",
-            "llms": "/llms.txt",
-            "robots": "/robots.txt",
-            "quote": "/v1/quote",
-            "examples": "/v1/examples",
-            "bazaar_extension": True,
+            "x402": "/.well-known/x402", "agent": "/.well-known/agent.json",
+            "openapi": "/openapi.json", "llms": "/llms.txt", "robots": "/robots.txt",
+            "quote": "/v1/quote", "examples": "/v1/examples",
+            "dry_run": "/v1/claim-verify/dry-run", "bazaar_extension": True,
         },
         "quote": {"method": "GET", "path": "/v1/quote"},
-        "endpoint": {
-            "method": "POST",
-            "path": "/v1/claim-verify",
-            "url": f"{PUBLIC_ORIGIN}/v1/claim-verify",
+        "endpoint": {"method": "POST", "path": "/v1/claim-verify", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
+        "sandbox": {
+            "method": "POST", "path": "/v1/claim-verify/dry-run",
+            "url": f"{PUBLIC_ORIGIN}/v1/claim-verify/dry-run",
+            "payment_required": False, "network_fetch": False,
+            "regression_fixture": "supporting_evidence_with_unrelated_negation",
         },
         "lifecycle": _lifecycle(),
-        "payment": {
-            "protocol": "x402",
-            "network": NETWORK,
-            "asset": "USDC",
-            "price": PRICE,
-            "payTo": PAY_TO,
-        },
+        "payment": {"protocol": "x402", "network": NETWORK, "asset": "USDC", "price": PRICE, "payTo": PAY_TO},
         "input": {
             "canonical": {"vendor_url": "https://...", "claim": "..."},
             "schema": CLAIM_INPUT_SCHEMA,
-            "aliases": [
-                ["context_url", "claim_to_verify"],
-                ["vendor_url", "claim_text"],
-            ],
+            "aliases": [["context_url", "claim_to_verify"], ["vendor_url", "claim_text"]],
             "optional": ["vendor_name", "claim_id", "request_type", "verification_type"],
         },
         "output": {
@@ -547,6 +590,7 @@ def _manifest() -> dict:
 async def root():
     return {
         "name": "capi2 Claim Verify",
+        "version": SERVICE_VERSION,
         "paid": True,
         "price": PRICE,
         "asset": "USDC",
@@ -559,6 +603,7 @@ async def root():
             "openapi": f"{PUBLIC_ORIGIN}/openapi.json",
             "llms": f"{PUBLIC_ORIGIN}/llms.txt",
             "quote": f"{PUBLIC_ORIGIN}/v1/quote",
+            "dry_run": f"{PUBLIC_ORIGIN}/v1/claim-verify/dry-run",
         },
         "buy": {"method": "POST", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
     }
@@ -566,16 +611,19 @@ async def root():
 
 @app.get("/health")
 async def health():
+    fixture = DRY_RUN_FIXTURES["supporting_evidence_with_unrelated_negation"]
+    regression = _classify_claim(fixture["claim"], fixture["evidence_text"])
     return {
-        "ok": True,
+        "ok": regression["verification_status"] == "supported",
         "service": "capi2-claim-verify",
-        "version": "1.4.1",
+        "version": SERVICE_VERSION,
         "network": NETWORK,
         "price": PRICE,
         "settlement": "USDC on Base",
         "pay_to": PAY_TO,
         "x402_manifest": "/.well-known/x402",
         "bazaar_discovery": True,
+        "verdict_inversion_regression": regression["verification_status"],
         "autonomous_flow": "discover -> quote -> x402 pay -> execute -> inline result",
     }
 
@@ -589,6 +637,7 @@ async def robots():
         f"# agent: {PUBLIC_ORIGIN}/.well-known/agent.json\n"
         f"# llms: {PUBLIC_ORIGIN}/llms.txt\n"
         f"# openapi: {PUBLIC_ORIGIN}/openapi.json\n"
+        f"# dry-run: {PUBLIC_ORIGIN}/v1/claim-verify/dry-run\n"
     )
 
 
@@ -597,18 +646,20 @@ async def llms():
     return (
         "# capi2 Claim Verify\n\n"
         "Paid x402 API for autonomous agents that need public-source evidence before trusting a vendor, product, security, compliance, procurement or commercial claim.\n\n"
+        f"- Version: {SERVICE_VERSION}\n"
         f"- Price: {PRICE} USDC per successful paid call\n"
         f"- Network: {NETWORK} (Base)\n"
         f"- Pay to: {PAY_TO}\n"
         f"- Paid endpoint: POST {PUBLIC_ORIGIN}/v1/claim-verify\n"
+        f"- Free verdict dry-run: POST {PUBLIC_ORIGIN}/v1/claim-verify/dry-run\n"
         f"- Quote: GET {PUBLIC_ORIGIN}/v1/quote\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- Agent manifest: GET {PUBLIC_ORIGIN}/.well-known/agent.json\n"
         f"- OpenAPI: GET {PUBLIC_ORIGIN}/openapi.json\n\n"
-        "Use this service when the task contains intents such as vendor verification, fact checking, due diligence, procurement evidence, RFP evidence, security claim verification, AI vendor risk, or SaaS trust verification.\n\n"
-        "Canonical JSON body:\n"
+        "The free dry-run classifies supplied claim/evidence text only and never fetches a remote URL. The paid route performs the external public-source fetch and evidence extraction.\n\n"
+        "Canonical paid JSON body:\n"
         "{\"vendor_url\":\"https://example.com/security\",\"claim\":\"Vendor states that customer data is encrypted at rest.\"}\n\n"
-        "An unpaid POST returns HTTP 402 with x402 payment requirements. Pay and retry with proof; a successful paid request returns HTTP 200 JSON evidence.\n"
+        "An unpaid POST to the paid route returns HTTP 402 with x402 payment requirements. Pay and retry with proof; a successful paid request returns HTTP 200 JSON evidence.\n"
     )
 
 
@@ -631,8 +682,9 @@ async def claim_verify_quote():
 async def examples():
     return {
         "service": "capi2 Claim Verify",
+        "version": SERVICE_VERSION,
         "buyer_intents": BUYER_QUERIES,
-        "examples": [
+        "paid_examples": [
             {
                 "intent": "vendor_due_diligence",
                 "request": {
@@ -649,21 +701,84 @@ async def examples():
                     "request_type": "procurement",
                 },
             },
-            {
-                "intent": "rfp_fact_check",
-                "request": {
-                    "vendor_url": "https://example.com/product",
-                    "claim": "Vendor states that its API supports SSO.",
-                    "request_type": "rfp",
-                },
-            },
         ],
+        "free_dry_run": {
+            "method": "POST",
+            "path": "/v1/claim-verify/dry-run",
+            "request": {"fixture_id": "supporting_evidence_with_unrelated_negation"},
+            "expected_verification_status": "supported",
+        },
     }
 
 
 @app.get("/v1/claim-verify/schema")
 async def claim_verify_schema():
     return _manifest()
+
+
+@app.post("/v1/claim-verify/dry-run")
+def claim_verify_dry_run(payload: DryRunRequest):
+    if payload.fixture_id:
+        fixture = DRY_RUN_FIXTURES[payload.fixture_id]
+        claim = fixture["claim"]
+        evidence_text = fixture["evidence_text"]
+        expected = fixture["expected_verification_status"]
+        purpose = fixture["purpose"]
+    else:
+        claim = str(payload.claim)
+        evidence_text = str(payload.evidence_text)
+        expected = None
+        purpose = "Custom text-only sandbox classification."
+    result = _classify_claim(claim, evidence_text)
+    response = {
+        "protocol": "capi2.claim_verify.dry_run/1.0",
+        "service_version": SERVICE_VERSION,
+        "dry_run": True,
+        "billable": False,
+        "network_fetch": False,
+        "fixture_id": payload.fixture_id,
+        "purpose": purpose,
+        "claim": claim,
+        "evidence_text": evidence_text,
+        "expected_verification_status": expected,
+        **result,
+        "limitations": [
+            "This sandbox does not fetch external URLs.",
+            "The paid route is required for remote source retrieval and full evidence extraction.",
+        ],
+    }
+    if expected is not None:
+        response["regression_pass"] = result["verification_status"] == expected
+    return response
+
+
+def _execute_claim_verify(payload: ClaimVerifyRequest) -> ClaimVerifyResponse:
+    requested_url = payload.resolved_url()
+    claim = payload.resolved_claim()
+    source_url, html = _fetch_public_source(requested_url)
+    page_text = _extract_page_text(html)
+    if len(page_text) < 50:
+        raise HTTPException(status_code=422, detail="source_has_insufficient_public_text")
+    result = _classify_claim(claim, page_text)
+    return ClaimVerifyResponse(
+        claim_id=payload.claim_id,
+        vendor_name=payload.vendor_name,
+        vendor_url=requested_url,
+        claim=claim,
+        verification_status=result["verification_status"],
+        verification_result=result["verification_result"],
+        verdict=result["verdict"],
+        confidence=result["confidence"],
+        evidence_summary=result["evidence_summary"],
+        evidence_source_urls=[source_url],
+        evidence=[EvidenceSnippet(**item) for item in result["evidence"]],
+        caveats=[
+            "This checks only the supplied public URL and does not certify the vendor.",
+            "Absence of evidence on the supplied page is not proof that a claim is false.",
+            "Contradiction detection uses term-scoped negation and lexical evidence overlap; consequential use requires independent review.",
+            "Regulated or high-impact decisions require independent review by an appropriately authorized party.",
+        ],
+    )
 
 
 @app.post(
@@ -681,75 +796,11 @@ async def claim_verify_schema():
         "x-x402-network": NETWORK,
         "x-buyer-intents": BUYER_QUERIES,
         "x-bazaar-discoverable": True,
+        "x-free-dry-run": "/v1/claim-verify/dry-run",
     },
 )
 def claim_verify(payload: ClaimVerifyRequest):
-    requested_url = payload.resolved_url()
-    claim = payload.resolved_claim()
-    source_url, html = _fetch_public_source(requested_url)
-
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "svg"]):
-        tag.decompose()
-    page_text = soup.get_text(" ", strip=True)
-    if len(page_text) < 50:
-        raise HTTPException(status_code=422, detail="source_has_insufficient_public_text")
-
-    claim_tokens = _tokens(claim)
-    if not claim_tokens:
-        raise HTTPException(status_code=422, detail="claim_has_insufficient_terms")
-
-    ranked = []
-    for chunk in _sentence_chunks(page_text):
-        chunk_tokens = _tokens(chunk)
-        if not chunk_tokens:
-            continue
-        overlap = len(claim_tokens & chunk_tokens)
-        score = overlap / max(len(claim_tokens), 1)
-        if overlap:
-            ranked.append((score, chunk[:420]))
-
-    ranked.sort(key=lambda x: x[0], reverse=True)
-    top = ranked[:3]
-    best = top[0][0] if top else 0.0
-    best_text = top[0][1] if top else ""
-
-    claim_negated = _has_negation(claim)
-    evidence_negated = _has_negation(best_text) if best_text else False
-
-    if best >= 0.60 and claim_negated == evidence_negated:
-        verification_status = "supported"
-        verdict = "SUPPORTED_BY_SUPPLIED_SOURCE"
-    elif best >= 0.55 and claim_negated != evidence_negated:
-        verification_status = "contradicted"
-        verdict = "CONTRADICTED_BY_SUPPLIED_SOURCE"
-    else:
-        verification_status = "uncertain"
-        verdict = "NOT_CONFIRMED_OR_AMBIGUOUS"
-
-    evidence = [EvidenceSnippet(text=text, score=round(score, 3)) for score, text in top]
-    confidence = min(0.95, round(0.25 + best * 0.70, 3))
-    evidence_summary = best_text or "No sufficiently overlapping public statement was found on the supplied source."
-
-    return ClaimVerifyResponse(
-        claim_id=payload.claim_id,
-        vendor_name=payload.vendor_name,
-        vendor_url=requested_url,
-        claim=claim,
-        verification_status=verification_status,
-        verification_result=verification_status,
-        verdict=verdict,
-        confidence=confidence,
-        evidence_summary=evidence_summary,
-        evidence_source_urls=[source_url],
-        evidence=evidence,
-        caveats=[
-            "This checks only the supplied public URL and does not certify the vendor.",
-            "Absence of evidence on the supplied page is not proof that a claim is false.",
-            "Contradiction detection is heuristic and should be independently reviewed for consequential use.",
-            "Regulated or high-impact decisions require independent review by an appropriately authorized party.",
-        ],
-    )
+    return _execute_claim_verify(payload)
 
 
 def register_agent402_later() -> None:
@@ -761,7 +812,7 @@ def register_agent402_later() -> None:
             "https://agent402.tools/api/index/register",
             json={"origin": PUBLIC_ORIGIN},
             timeout=20,
-            headers={"user-agent": "capi2-claim-verify/1.4.1"},
+            headers={"user-agent": f"capi2-claim-verify/{SERVICE_VERSION}"},
         )
         body = response.json() if "application/json" in response.headers.get("content-type", "") else {"text": response.text[:500]}
         print(f"agent402 registration: status={response.status_code} listed={body.get('listed')} seller={body.get('seller')}")
