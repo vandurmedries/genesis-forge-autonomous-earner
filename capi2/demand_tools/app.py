@@ -24,6 +24,8 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
+from .revenue_ops import install as install_revenue_ops
+
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
 NETWORK = os.getenv("CAPI2_X402_NETWORK", "eip155:8453")
 FACILITATOR_URL = os.getenv("CAPI2_X402_FACILITATOR", "https://facilitator.payai.network")
@@ -47,6 +49,7 @@ app = FastAPI(
 facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
 server = x402ResourceServer(facilitator)
 server.register(NETWORK, ExactEvmServerScheme())
+install_revenue_ops(server, PUBLIC_ORIGIN)
 
 TEXT_SCHEMA = {
     "type": "object",
@@ -771,6 +774,12 @@ def health() -> dict[str, Any]:
         "paid_tools": len(tool_catalog()),
         "bazaar_discovery": True,
         "positioning": "live public intelligence + x402 agent utilities",
+        "revenue_ops": {
+            "post_settlement_observer": True,
+            "lago": bool(os.getenv("CAPI2_LAGO_WEBHOOK_URL")),
+            "trigger": bool(os.getenv("CAPI2_TRIGGER_WEBHOOK_URL")),
+            "crm": bool(os.getenv("CAPI2_CRM_WEBHOOK_URL")),
+        },
     }
 
 
