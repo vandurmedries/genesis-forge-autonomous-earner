@@ -93,7 +93,25 @@ def _bazaar_extension(intent: dict) -> dict:
             "info": {
                 "input": {"type": "http", "method": "POST", "bodyType": "json", "body": example},
                 "output": {"type": "json", "example": CLAIM_OUTPUT_EXAMPLE},
-            }
+            },
+            "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "http"},
+                            "method": {"type": "string", "const": "POST"},
+                            "bodyType": {"type": "string", "const": "json"},
+                            "body": CLAIM_INPUT_SCHEMA,
+                        },
+                        "required": ["type", "method", "bodyType", "body"],
+                    },
+                    "output": {"type": "object"},
+                },
+                "required": ["input"],
+            },
         }
     }
 
