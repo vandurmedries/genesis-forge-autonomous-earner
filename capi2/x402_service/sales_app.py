@@ -133,17 +133,22 @@ for path, intent in SALES_INTENTS.items():
 app.add_middleware(PaymentMiddlewareASGI, routes=sales_routes, server=server)
 
 
-def _payment_info(path: str) -> dict:
-    intent = SALES_INTENTS[path]
+def _payment_info(path: str | None = None) -> dict:
+    buyer_intents = SALES_INTENTS[path]["buyer_queries"] if path else [
+        "verify a vendor claim against public evidence",
+        "fact check an AI vendor or SaaS claim",
+        "procurement due diligence evidence",
+        "vendor risk evidence check",
+    ]
     return {
         "price": {"mode": "fixed", "currency": "USD", "amount": PRICE.lstrip("$")},
-        "protocols": [{"x402": {"version": 2}}],
+        "protocols": [{"x402": {}}],
         "network": NETWORK,
         "asset": "USDC",
         "payTo": PAY_TO,
         "paymentHeader": "PAYMENT-SIGNATURE",
         "settlementHeader": "PAYMENT-RESPONSE",
-        "buyerIntents": intent["buyer_queries"],
+        "buyerIntents": buyer_intents,
     }
 
 
@@ -227,3 +232,45 @@ def procurement_claim_check(payload: ClaimVerifyRequest):
 )
 def data_clause_check(payload: ClaimVerifyRequest):
     return _execute_claim_verify(payload)
+
+
+# Keep x402scan/OpenAPI discovery self-contained inside the actual Render
+# production module. This avoids depending on repository-root Python shims that
+# are not guaranteed to load when Render starts from capi2/x402_service.
+_base_openapi = app.openapi
+app.openapi_schema = None
+
+
+def _sales_openapi():
+    if app.openapi_schema is not None:
+        return app.openapi_schema
+    schema = _base_openapi()
+    info = schema.setdefault("info", {})
+    info["x-guidance"] = (
+        "Use POST /v1/vendor-security-check for security/compliance claims, "
+        "POST /v1/procurement-claim-check for SaaS/RFP/procurement claims, "
+        "POST /v1/data-clause-check for AI-data/privacy/DPA claims, or "
+        "POST /v1/claim-verify as the general endpoint. Send JSON with vendor_url and claim. "
+        "Each paid POST costs $0.01 USDC on Base via x402 v2: call unpaid to receive HTTP 402, "
+        "pay the challenge, then retry the same request with PAYMENT-SIGNATURE."
+    )
+    info.setdefault("contact", {})["email"] = "capi2@agentmail.to"
+
+    canonical = schema.get("paths", {}).get("/v1/claim-verify", {}).get("post")
+    if isinstance(canonical, dict):
+        canonical["x-payment-info"] = _payment_info()
+        canonical.setdefault("responses", {}).setdefault("402", {"description": "Payment Required"})
+
+    # FastAPI's openapi_extra already publishes the required payment metadata
+    # for aliases; ensure a strict 402 response description survives merging.
+    for path in SALES_INTENTS:
+        operation = schema.get("paths", {}).get(path, {}).get("post")
+        if isinstance(operation, dict):
+            operation.setdefault("x-payment-info", _payment_info(path))
+            operation.setdefault("responses", {}).setdefault("402", {"description": "Payment Required"})
+
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _sales_openapi

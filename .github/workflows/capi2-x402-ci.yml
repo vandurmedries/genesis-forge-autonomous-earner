@@ -75,12 +75,21 @@ jobs:
           assert len(catalog.json().get("resources", [])) == 3
 
           schema = client.get("/openapi.json").json()
-          for path in service.SALES_INTENTS:
+          assert schema["info"].get("x-guidance"), "missing info.x-guidance"
+          assert schema["info"].get("contact", {}).get("email") == "capi2@agentmail.to"
+
+          paid_paths = ["/v1/claim-verify", *service.SALES_INTENTS.keys()]
+          for path in paid_paths:
               op = schema["paths"][path]["post"]
               assert "x-payment-info" in op, path
               assert "402" in op["responses"], path
-              assert op["x-payment-info"]["network"] == "eip155:8453"
-              assert op["x-payment-info"]["asset"] == "USDC"
+              payment = op["x-payment-info"]
+              assert payment["price"]["mode"] == "fixed", path
+              assert payment["price"]["currency"] == "USD", path
+              assert payment["price"]["amount"] == "0.01", path
+              assert payment["protocols"] == [{"x402": {}}], path
+              assert payment["network"] == "eip155:8453", path
+              assert payment["asset"] == "USDC", path
 
-          print("capi2 high-intent x402 sales surface smoke checks OK")
+          print("capi2 strict x402scan discovery + sales surface smoke checks OK")
           PY
