@@ -1,11 +1,19 @@
-"""Repository usercustomize intentionally left side-effect free.
+"""Repository startup hook for narrow production compatibility only.
 
-Claim Verify verdict logic and its free dry-run/regression surface now live in
-capi2/x402_service/app.py directly.  Keeping a second FastAPI/Pydantic monkey
-patch here caused OpenAPI generation to fail under Pydantic 2.13 because a
-locally-scoped request model survived as an unresolved ForwardRef.
+Claim Verify verdict and sandbox logic live directly in capi2/x402_service/app.py.
+This hook performs one safe startup action: after repository sitecustomize has
+loaded, restore the native x402 2.20.0 HTTP settlement method before the
+FastAPI application module is imported.
 
-Do not add payment, verdict, or FastAPI runtime patches here. Production x402
-compatibility is handled explicitly by capi2/x402_service/bootstrap.py and
-x402_runtime_fix.py.
+During Render build commands x402 may not be installed yet, so dependency
+absence is deliberately ignored. At runtime the pinned dependency is present
+and the guard must install successfully.
 """
+from __future__ import annotations
+
+try:
+    import capi2.x402_service.x402_runtime_fix  # noqa: F401
+except ModuleNotFoundError as exc:
+    # Expected during early build-tool Python startup before requirements are
+    # installed. Do not break pip/build initialization.
+    print(f"x402-runtime-fix: deferred until runtime ({exc})", flush=True)
