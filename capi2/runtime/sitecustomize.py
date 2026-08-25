@@ -1,8 +1,9 @@
 """Claim Verify runtime bootstrap.
 
 This module is placed first on PYTHONPATH for the Claim Verify Render service.
-It loads the repository-wide x402 support, the verdict guard, and the unified
-same-origin intelligence storefront from explicit repository paths.
+It loads the repository-wide x402 support, the verdict guard, the unified
+same-origin intelligence storefront, and distribution-only marketplace
+registration helpers from explicit repository paths.
 """
 from __future__ import annotations
 
@@ -56,3 +57,13 @@ try:
     )
 except Exception as exc:
     print(f"claim-runtime-bootstrap: storefront error {type(exc).__name__}: {exc}", flush=True)
+
+try:
+    distribution = _load("_capi2_true402_register", _RUNTIME / "true402_register.py")
+    print(
+        "claim-runtime-bootstrap: true402_file="
+        f"{getattr(distribution, '__file__', None)} enabled={getattr(distribution, 'ENABLED', False)}",
+        flush=True,
+    )
+except Exception as exc:
+    print(f"claim-runtime-bootstrap: true402 registration error {type(exc).__name__}: {exc}", flush=True)
