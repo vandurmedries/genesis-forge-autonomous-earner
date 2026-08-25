@@ -36,14 +36,14 @@ jobs:
 
       - name: Import production FastAPI sales module
         env:
-          PYTHONPATH: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}/capi2/x402_service
         run: |
           python - <<'PY'
           import importlib.metadata as metadata
           from fastapi.testclient import TestClient
-          from capi2.x402_service import sales_app as service
+          import sales_app as service
 
-          print("python import path: production sales package")
+          print("python import path: Render rootDir sales module")
           print("x402:", metadata.version("x402"))
           print("fastapi:", metadata.version("fastapi"))
 
