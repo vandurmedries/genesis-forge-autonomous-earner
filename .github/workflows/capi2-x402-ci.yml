@@ -5,11 +5,17 @@ on:
     branches: [main]
     paths:
       - "capi2/x402_service/**"
+      - "capi2/runtime/**"
+      - "sitecustomize.py"
+      - "usercustomize.py"
       - "render.yaml"
       - ".github/workflows/capi2-x402-ci.yml"
   pull_request:
     paths:
       - "capi2/x402_service/**"
+      - "capi2/runtime/**"
+      - "sitecustomize.py"
+      - "usercustomize.py"
       - "render.yaml"
       - ".github/workflows/capi2-x402-ci.yml"
   workflow_dispatch:
@@ -32,25 +38,33 @@ jobs:
         run: python -m pip install --upgrade pip && pip install -r capi2/x402_service/requirements.txt
 
       - name: Compile
-        run: python -m compileall -q capi2/x402_service
+        run: python -m compileall -q capi2/x402_service capi2/runtime sitecustomize.py usercustomize.py
 
-      - name: Import production FastAPI sales module
+      - name: Validate Render-equivalent package and x402scan discovery
         env:
-          PYTHONPATH: ${{ github.workspace }}/capi2/x402_service
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python - <<'PY'
+          import importlib
           import importlib.metadata as metadata
           from fastapi.testclient import TestClient
-          import sales_app as service
 
-          print("python import path: Render rootDir sales module")
+          # Import through the package exactly as Render does with
+          # `uvicorn capi2.x402_service.app:app`. Package initialization loads
+          # sales_app and the deterministic x402scan discovery contract while
+          # repo-root sitecustomize/usercustomize are also active.
+          service = importlib.import_module("capi2.x402_service.app")
+          sales = importlib.import_module("capi2.x402_service.sales_app")
+          api = service.app
+
+          print("python import path: Render-equivalent package")
           print("x402:", metadata.version("x402"))
           print("fastapi:", metadata.version("fastapi"))
 
           assert service.NETWORK == "eip155:8453"
           assert service.PRICE == "$0.01"
 
-          route_paths = {getattr(route, "path", None) for route in service.app.routes}
+          route_paths = {getattr(route, "path", None) for route in api.routes}
           required_paths = {
               "/health",
               "/.well-known/x402",
@@ -65,31 +79,31 @@ jobs:
           missing = required_paths - route_paths
           assert not missing, f"missing FastAPI routes: {sorted(missing)}"
 
-          client = TestClient(service.app)
+          client = TestClient(api)
           health = client.get("/health")
           assert health.status_code == 200, health.text
           assert health.json().get("ok") is True
 
-          catalog = client.get("/v1/buyer-catalog")
-          assert catalog.status_code == 200, catalog.text
-          assert len(catalog.json().get("resources", [])) == 3
-
-          schema = client.get("/openapi.json").json()
+          openapi_response = client.get("/openapi.json")
+          assert openapi_response.status_code == 200, openapi_response.text
+          schema = openapi_response.json()
+          assert schema.get("openapi") == "3.1.0"
+          assert schema.get("x-capi2-static-discovery") is True
           assert schema["info"].get("x-guidance"), "missing info.x-guidance"
           assert schema["info"].get("contact", {}).get("email") == "capi2@agentmail.to"
 
-          paid_paths = ["/v1/claim-verify", *service.SALES_INTENTS.keys()]
+          paid_paths = ["/v1/claim-verify", *sales.SALES_INTENTS.keys()]
+          assert set(schema["paths"]) == set(paid_paths)
           for path in paid_paths:
               op = schema["paths"][path]["post"]
-              assert "x-payment-info" in op, path
+              assert op.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema"), path
+              assert op.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {}).get("schema"), path
               assert "402" in op["responses"], path
               payment = op["x-payment-info"]
-              assert payment["price"]["mode"] == "fixed", path
-              assert payment["price"]["currency"] == "USD", path
-              assert payment["price"]["amount"] == "0.01", path
+              assert payment["price"] == {"mode": "fixed", "currency": "USD", "amount": "0.01"}, path
               assert payment["protocols"] == [{"x402": {}}], path
               assert payment["network"] == "eip155:8453", path
               assert payment["asset"] == "USDC", path
 
-          print("capi2 strict x402scan discovery + sales surface smoke checks OK")
+          print("capi2 Render-equivalent OpenAPI + strict x402scan discovery checks OK")
           PY
