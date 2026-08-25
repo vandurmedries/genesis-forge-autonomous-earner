@@ -24,7 +24,6 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # Match the Python runtime currently used by the Render production service.
           python-version: "3.14"
           cache: pip
           cache-dependency-path: capi2/x402_service/requirements.txt
@@ -35,21 +34,21 @@ jobs:
       - name: Compile
         run: python -m compileall -q capi2/x402_service
 
-      - name: Import production FastAPI module
+      - name: Import production FastAPI sales module
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           python - <<'PY'
           import importlib.metadata as metadata
           from fastapi.testclient import TestClient
-          from capi2.x402_service import app as service
+          from capi2.x402_service import sales_app as service
 
-          print("python import path: production package")
+          print("python import path: production sales package")
           print("x402:", metadata.version("x402"))
           print("fastapi:", metadata.version("fastapi"))
 
           assert service.NETWORK == "eip155:8453"
-          assert service._price_usd() > 0
+          assert service.PRICE == "$0.01"
 
           route_paths = {getattr(route, "path", None) for route in service.app.routes}
           required_paths = {
@@ -58,6 +57,10 @@ jobs:
               "/.well-known/agent.json",
               "/v1/quote",
               "/v1/claim-verify",
+              "/v1/buyer-catalog",
+              "/v1/vendor-security-check",
+              "/v1/procurement-claim-check",
+              "/v1/data-clause-check",
           }
           missing = required_paths - route_paths
           assert not missing, f"missing FastAPI routes: {sorted(missing)}"
@@ -67,15 +70,17 @@ jobs:
           assert health.status_code == 200, health.text
           assert health.json().get("ok") is True
 
-          manifest = client.get("/.well-known/x402")
-          assert manifest.status_code == 200, manifest.text
-          body = manifest.json()
-          assert body.get("protocol") == "x402"
-          assert body.get("network") == "eip155:8453"
+          catalog = client.get("/v1/buyer-catalog")
+          assert catalog.status_code == 200, catalog.text
+          assert len(catalog.json().get("resources", [])) == 3
 
-          quote = client.get("/v1/quote")
-          assert quote.status_code == 200, quote.text
-          assert quote.json().get("payment_protocol") == "x402"
+          schema = client.get("/openapi.json").json()
+          for path in service.SALES_INTENTS:
+              op = schema["paths"][path]["post"]
+              assert "x-payment-info" in op, path
+              assert "402" in op["responses"], path
+              assert op["x-payment-info"]["network"] == "eip155:8453"
+              assert op["x-payment-info"]["asset"] == "USDC"
 
-          print("capi2 x402 production import + smoke checks OK")
+          print("capi2 high-intent x402 sales surface smoke checks OK")
           PY
