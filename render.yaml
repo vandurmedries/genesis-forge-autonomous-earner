@@ -14,6 +14,6 @@ services:
       - key: CAPI2_X402_NETWORK
         value: eip155:8453
       - key: CAPI2_X402_FACILITATOR
-        value: https://facilitator.payai.network
+        value: https://facilitator.xpay.sh
       - key: CAPI2_CLAIM_VERIFY_PRICE
         value: "$0.01"
