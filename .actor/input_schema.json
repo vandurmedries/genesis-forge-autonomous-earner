@@ -1,0 +1,65 @@
+{
+  "title": "capi2 Agent Intelligence input",
+  "description": "Choose one intelligence tool. The Actor fetches public internet sources only and returns one structured result.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "tool": {
+      "title": "Tool",
+      "type": "string",
+      "description": "Intelligence operation to run.",
+      "editor": "select",
+      "enum": ["claim_verify", "evidence_extract", "domain_intelligence", "web_lookup", "api_audit"],
+      "enumTitles": ["Verify a claim", "Extract evidence", "Domain intelligence", "Live web lookup", "Audit an API"],
+      "default": "claim_verify"
+    },
+    "url": {
+      "title": "Public URL",
+      "type": "string",
+      "description": "Public HTTP(S) source or API URL. Required except for domain intelligence.",
+      "editor": "textfield",
+      "prefill": "https://example.com"
+    },
+    "domain": {
+      "title": "Domain",
+      "type": "string",
+      "description": "Domain name for domain intelligence, for example example.com.",
+      "editor": "textfield",
+      "prefill": "example.com"
+    },
+    "query": {
+      "title": "Claim or query",
+      "type": "string",
+      "description": "Exact claim to verify or keywords/question used to rank passages.",
+      "editor": "textarea",
+      "prefill": "This is the Example Domain."
+    },
+    "request_type": {
+      "title": "Claim request type",
+      "type": "string",
+      "editor": "select",
+      "enum": ["fact_check", "vendor_due_diligence", "procurement", "security_review", "compliance_review"],
+      "default": "fact_check"
+    },
+    "max_passages": {
+      "title": "Maximum evidence passages",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 5
+    },
+    "max_bytes": {
+      "title": "Maximum download bytes",
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 750000,
+      "default": 200000
+    },
+    "include_rdap": {
+      "title": "Include RDAP registration metadata",
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": ["tool"]
+}
