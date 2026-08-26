@@ -29,12 +29,11 @@ async def main() -> None:
                 result = await asyncio.to_thread(scan_website, url, include_contacts)
             except Exception as exc:
                 Actor.log.warning("Skipped %s: %s", url, exc)
-                await Actor.push_data({"input": url, "status": "failed", "error": str(exc), "charged": False})
                 continue
             result["status"] = "completed"
-            result["billable_event"] = "site_result"
-            charge = await Actor.push_data(result, charged_event_name="site_result")
-            Actor.log.info("Scanned %s; charged_count=%s", url, getattr(charge, "charged_count", None))
+            result["billable_event"] = "apify-default-dataset-item"
+            await Actor.push_data(result)
+            Actor.log.info("Scanned and stored %s", url)
 
 
 if __name__ == "__main__":
