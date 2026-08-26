@@ -37,6 +37,7 @@
     "request_type": {
       "title": "Claim request type",
       "type": "string",
+      "description": "Business context used to classify and format a claim-verification result.",
       "editor": "select",
       "enum": ["fact_check", "vendor_due_diligence", "procurement", "security_review", "compliance_review"],
       "default": "fact_check"
@@ -44,6 +45,7 @@
     "max_passages": {
       "title": "Maximum evidence passages",
       "type": "integer",
+      "description": "Maximum number of ranked source passages returned in the result.",
       "minimum": 1,
       "maximum": 10,
       "default": 5
@@ -51,6 +53,7 @@
     "max_bytes": {
       "title": "Maximum download bytes",
       "type": "integer",
+      "description": "Maximum number of bytes fetched from the public source URL.",
       "minimum": 1000,
       "maximum": 750000,
       "default": 200000
@@ -58,6 +61,7 @@
     "include_rdap": {
       "title": "Include RDAP registration metadata",
       "type": "boolean",
+      "description": "Whether domain intelligence should include public RDAP registration data.",
       "default": true
     }
   },
