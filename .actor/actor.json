@@ -1,0 +1,19 @@
+{
+  "actorSpecification": 1,
+  "name": "capi2-agent-intelligence",
+  "title": "capi2 Agent Intelligence Toolkit",
+  "description": "Agent-ready public web, domain, API, evidence and claim intelligence with pay-per-result monetization.",
+  "version": "1.0",
+  "buildTag": "latest",
+  "usesStandbyMode": false,
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 512,
+  "dockerfile": "./Dockerfile",
+  "dockerContextDir": "..",
+  "readme": "./ACTOR.md",
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}
