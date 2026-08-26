@@ -1,0 +1,41 @@
+"""Apify entry point for Website Buyer Signal Scanner."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from apify import Actor
+
+from scanner import scan_website
+
+
+def _inputs(actor_input: dict[str, Any]) -> list[str]:
+    values = actor_input.get("startUrls") or []
+    urls = [item.get("url") if isinstance(item, dict) else item for item in values]
+    urls.extend(actor_input.get("domains") or [])
+    return list(dict.fromkeys(str(url).strip() for url in urls if url and str(url).strip()))[:100]
+
+
+async def main() -> None:
+    async with Actor:
+        actor_input = await Actor.get_input() or {}
+        urls = _inputs(actor_input)
+        if not urls:
+            raise ValueError("Provide at least one start URL or domain.")
+        include_contacts = bool(actor_input.get("includeContacts", True))
+        for url in urls:
+            try:
+                result = await asyncio.to_thread(scan_website, url, include_contacts)
+            except Exception as exc:
+                Actor.log.warning("Skipped %s: %s", url, exc)
+                await Actor.push_data({"input": url, "status": "failed", "error": str(exc), "charged": False})
+                continue
+            result["status"] = "completed"
+            result["billable_event"] = "site_result"
+            charge = await Actor.push_data(result, charged_event_name="site_result")
+            Actor.log.info("Scanned %s; charged_count=%s", url, getattr(charge, "charged_count", None))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
