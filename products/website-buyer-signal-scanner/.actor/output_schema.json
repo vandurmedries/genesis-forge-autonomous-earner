@@ -1,0 +1,6 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "Website Buyer Signal Scanner output",
+  "description": "One dataset row per requested website.",
+  "properties": {"results": {"type": "string", "title": "Results", "template": "{{links.apiDefaultDatasetUrl}}/items"}}
+}
