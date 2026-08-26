@@ -5,7 +5,7 @@
   },
   "api": {
     "name": "capi2 Claim Verify",
-    "description": "Evidence-backed public-source verification for vendor, AI/SaaS, security, compliance, procurement, RFP and commercial claims. Built for autonomous agents that need to check a claim before trusting, routing or acting on it.",
+    "description": "Check one precise vendor, AI/SaaS, security, compliance, procurement, RFP or commercial claim against up to three buyer-supplied public URLs. Returns conservative supported, contradicted or uncertain JSON with evidence snippets, source outcomes, confidence, request ID and timestamp. This is evidence matching, not certification or legal advice.",
     "category_preference": [
       "Security & Compliance",
       "Data & Intelligence"
@@ -20,7 +20,9 @@
       "AI vendor risk",
       "SaaS trust",
       "RFP evidence",
-      "security claim verification"
+      "security claim verification",
+      "supplied source evidence",
+      "evidence snippets"
     ],
     "buyer_queries": [
       "verify a vendor claim against public evidence",
@@ -42,7 +44,10 @@
     "endpoint_method": "POST",
     "endpoint_path": "/v1/claim-verify",
     "input_example": {
-      "vendor_url": "https://example.com/security",
+      "source_urls": [
+        "https://example.com/security",
+        "https://example.com/privacy"
+      ],
       "claim": "Vendor states that customer data is encrypted at rest.",
       "request_type": "vendor_due_diligence"
     },
@@ -95,8 +100,15 @@
     "schema_path": "/v1/claim-verify/schema",
     "openapi_path": "/openapi.json",
     "llms_path": "/llms.txt",
-    "render_deploy_status": "deploying_discovery_upgrade",
-    "runtime_startup_verified": false,
-    "external_x402_marketplace_check": "recrawl_requested_after_discovery_upgrade"
+    "render_deploy_status": "production_payment_verified",
+    "runtime_startup_verified": true,
+    "external_x402_marketplace_check": "PayAPI Market paid canary succeeded",
+    "paid_canary": {
+      "amount_usdc": "0.01",
+      "network": "eip155:8453",
+      "http_status": 200,
+      "settlement_transaction": "0x4e94a877189eda0e0eb8950a1a1fde68cef7b1dee85edc2bc1e31834617c38fb",
+      "organic_customer_sale": false
+    }
   }
 }

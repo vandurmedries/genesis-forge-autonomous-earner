@@ -4,6 +4,8 @@ import re
 import socket
 import threading
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -19,7 +21,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.5.0"
+SERVICE_VERSION = "1.6.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
@@ -30,6 +32,7 @@ PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-veri
 AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "true"
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
 MAX_REDIRECTS = 3
+MAX_SOURCES = 3
 
 BUYER_TAGS = ["claim verification", "vendor risk", "due diligence", "fact checking", "procurement"]
 BUYER_QUERIES = [
@@ -39,6 +42,24 @@ BUYER_QUERIES = [
     "vendor risk evidence check",
     "RFP or security questionnaire claim verification",
 ]
+BEST_FOR = [
+    "Checking whether one or more supplied public pages contain support for a precise vendor claim",
+    "Extracting short evidence snippets for procurement, RFP, security, privacy, and SaaS review workflows",
+    "Getting a conservative supported, contradicted, or uncertain result in structured JSON",
+]
+NOT_FOR = [
+    "Independent certification, legal advice, or a full vendor audit",
+    "Discovering sources across the open web; the buyer must supply the URLs",
+    "Automated regulated or high-impact decisions without qualified human review",
+]
+PAID_CANARY = {
+    "verified": True,
+    "amount_usdc": "0.01",
+    "network": "eip155:8453",
+    "marketplace": "PayAPI Market",
+    "transaction": "0x4e94a877189eda0e0eb8950a1a1fde68cef7b1dee85edc2bc1e31834617c38fb",
+    "scope": "payment and HTTP 200 production canary; not an organic customer sale",
+}
 
 MATCH_STOPWORDS = {
     "about", "against", "claim", "claims", "public", "source", "states", "state",
@@ -54,6 +75,17 @@ CLAIM_INPUT_SCHEMA = {
             "format": "uri",
             "description": "Public source URL containing evidence relevant to the claim.",
         },
+        "source_urls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_SOURCES,
+            "uniqueItems": True,
+            "items": {"type": "string", "format": "uri"},
+            "description": (
+                "Optional list of up to three public evidence URLs. These are checked together; "
+                "vendor_url remains supported for backward compatibility."
+            ),
+        },
         "claim": {
             "type": "string",
             "minLength": 3,
@@ -65,7 +97,7 @@ CLAIM_INPUT_SCHEMA = {
         "request_type": {"type": "string", "maxLength": 120},
         "verification_type": {"type": "string", "maxLength": 120},
     },
-    "required": ["vendor_url", "claim"],
+    "anyOf": [{"required": ["vendor_url", "claim"]}, {"required": ["source_urls", "claim"]}],
     "additionalProperties": True,
 }
 
@@ -79,8 +111,20 @@ CLAIM_OUTPUT_EXAMPLE = {
     "confidence": 0.88,
     "evidence_summary": "Customer data is encrypted at rest.",
     "evidence_source_urls": ["https://example.com/security"],
-    "evidence": [{"text": "Customer data is encrypted at rest.", "score": 0.9}],
+    "evidence": [{
+        "text": "Customer data is encrypted at rest.",
+        "score": 0.9,
+        "source_url": "https://example.com/security"
+    }],
     "caveats": ["Checks only the supplied public URL."],
+    "request_id": "cv_018f5f8f0c2b4f7a",
+    "checked_at": "2026-08-26T15:00:00Z",
+    "sources_checked": 1,
+    "source_results": [{
+        "requested_url": "https://example.com/security",
+        "final_url": "https://example.com/security",
+        "status": "checked"
+    }],
 }
 
 CLAIM_OUTPUT_SCHEMA = {
@@ -97,12 +141,28 @@ CLAIM_OUTPUT_SCHEMA = {
         "confidence": {"type": "number"},
         "evidence_summary": {"type": "string"},
         "evidence_source_urls": {"type": "array", "items": {"type": "string"}},
-        "evidence": {"type": "array", "items": {"type": "object"}},
+        "evidence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "score": {"type": "number"},
+                    "source_url": {"type": ["string", "null"]},
+                },
+                "required": ["text", "score", "source_url"],
+            },
+        },
         "caveats": {"type": "array", "items": {"type": "string"}},
+        "request_id": {"type": "string"},
+        "checked_at": {"type": "string", "format": "date-time"},
+        "sources_checked": {"type": "integer", "minimum": 1, "maximum": MAX_SOURCES},
+        "source_results": {"type": "array", "items": {"type": "object"}},
     },
     "required": [
         "protocol", "vendor_url", "claim", "verification_status", "verification_result",
         "verdict", "confidence", "evidence_summary", "evidence_source_urls", "evidence", "caveats",
+        "request_id", "checked_at", "sources_checked", "source_results",
     ],
 }
 
@@ -194,8 +254,8 @@ routes = {
         resource=f"{PUBLIC_ORIGIN}/v1/claim-verify",
         mime_type="application/json",
         description=(
-            "Verify one public vendor, product, security, compliance, procurement or commercial "
-            "claim against a supplied public URL and return machine-readable evidence, verdict "
+            "Check a public vendor, product, security, compliance, procurement or commercial "
+            "claim against up to three buyer-supplied public URLs and return machine-readable evidence, verdict "
             "and confidence for autonomous-agent workflows."
         ),
         service_name="capi2 Claim Verify",
@@ -208,6 +268,7 @@ app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 class ClaimVerifyRequest(BaseModel):
     vendor_url: Optional[HttpUrl] = None
+    source_urls: Optional[List[HttpUrl]] = Field(default=None, min_length=1, max_length=MAX_SOURCES)
     claim: Optional[str] = Field(default=None, min_length=3, max_length=1200)
     context_url: Optional[HttpUrl] = None
     claim_to_verify: Optional[str] = Field(default=None, min_length=3, max_length=1200)
@@ -219,14 +280,21 @@ class ClaimVerifyRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_resolvable_input(self):
-        if self.vendor_url is None and self.context_url is None:
-            raise ValueError("vendor_url or context_url is required")
+        if self.vendor_url is None and self.context_url is None and not self.source_urls:
+            raise ValueError("vendor_url, context_url, or source_urls is required")
         if not (self.claim or self.claim_to_verify or self.claim_text):
             raise ValueError("claim, claim_to_verify, or claim_text is required")
         return self
 
     def resolved_url(self) -> str:
-        return str(self.vendor_url or self.context_url)
+        return self.resolved_urls()[0]
+
+    def resolved_urls(self) -> list[str]:
+        urls = [str(url) for url in (self.source_urls or [])]
+        legacy_url = self.vendor_url or self.context_url
+        if legacy_url is not None:
+            urls.insert(0, str(legacy_url))
+        return list(dict.fromkeys(urls))[:MAX_SOURCES]
 
     def resolved_claim(self) -> str:
         return str(self.claim or self.claim_to_verify or self.claim_text)
@@ -235,6 +303,7 @@ class ClaimVerifyRequest(BaseModel):
 class EvidenceSnippet(BaseModel):
     text: str
     score: float
+    source_url: Optional[str] = None
 
 
 class ClaimVerifyResponse(BaseModel):
@@ -251,6 +320,10 @@ class ClaimVerifyResponse(BaseModel):
     evidence_source_urls: List[str]
     evidence: List[EvidenceSnippet]
     caveats: List[str]
+    request_id: str
+    checked_at: str
+    sources_checked: int
+    source_results: List[dict]
 
 
 class DryRunRequest(BaseModel):
@@ -472,7 +545,9 @@ def _quote() -> dict:
         "protocol": "capi2.quote/1.2",
         "service": "claim_verify",
         "service_name": "capi2 Claim Verify",
-        "description": "Verify one vendor, product, compliance, security, procurement or commercial claim against one supplied public source URL.",
+        "description": "Check one precise claim against up to three buyer-supplied public source URLs and return evidence snippets plus a conservative verdict.",
+        "best_for": BEST_FOR,
+        "not_for": NOT_FOR,
         "price": PRICE,
         "asset": "USDC",
         "network": NETWORK,
@@ -504,6 +579,7 @@ def _quote() -> dict:
             "provider_share_bps": 9000,
             "note": "The 10/90 split applies to routed third-party marketplace jobs; this first-party service settles to the configured capi2 pay_to address.",
         },
+        "production_proof": PAID_CANARY,
     }
 
 
@@ -512,7 +588,7 @@ def _x402_manifest() -> dict:
         "name": "capi2 Claim Verify",
         "service_name": "capi2 Claim Verify",
         "version": SERVICE_VERSION,
-        "description": "Paid evidence-backed verification for vendor claims, AI/SaaS due diligence, procurement, RFP and security workflows.",
+        "description": "Paid supplied-source evidence matching for vendor claims, AI/SaaS due diligence, procurement, RFP and security workflows.",
         "homepage": PUBLIC_ORIGIN,
         "protocol": "x402",
         "network": NETWORK,
@@ -520,6 +596,9 @@ def _x402_manifest() -> dict:
         "payTo": PAY_TO,
         "tags": BUYER_TAGS,
         "buyer_queries": BUYER_QUERIES,
+        "best_for": BEST_FOR,
+        "not_for": NOT_FOR,
+        "production_proof": PAID_CANARY,
         "resources": [
             {
                 "name": "capi2 Claim Verify",
@@ -528,7 +607,7 @@ def _x402_manifest() -> dict:
                 "method": "POST",
                 "price_usd": _price_usd(),
                 "tags": BUYER_TAGS,
-                "summary": "Verify a vendor, product, security, compliance, procurement or commercial claim against a supplied public source URL.",
+                "summary": "Check one precise claim against up to three buyer-supplied public URLs and return evidence snippets plus a conservative verdict.",
                 "input_schema": CLAIM_INPUT_SCHEMA,
                 "example_request": {
                     "vendor_url": "https://example.com/security",
@@ -550,10 +629,13 @@ def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
         "protocol": PROTOCOL_VERSION,
-        "description": "Evidence-backed public-source claim verification for AI agents performing vendor risk, due diligence, procurement, RFP, security and commercial workflows.",
+        "description": "Supplied-source evidence matching for AI agents performing vendor risk, due diligence, procurement, RFP, security and commercial workflows.",
         "service_name": "capi2 Claim Verify",
         "tags": BUYER_TAGS,
         "buyer_queries": BUYER_QUERIES,
+        "best_for": BEST_FOR,
+        "not_for": NOT_FOR,
+        "production_proof": PAID_CANARY,
         "discovery": {
             "x402": "/.well-known/x402", "agent": "/.well-known/agent.json",
             "openapi": "/openapi.json", "llms": "/llms.txt", "robots": "/robots.txt",
@@ -571,10 +653,10 @@ def _manifest() -> dict:
         "lifecycle": _lifecycle(),
         "payment": {"protocol": "x402", "network": NETWORK, "asset": "USDC", "price": PRICE, "payTo": PAY_TO},
         "input": {
-            "canonical": {"vendor_url": "https://...", "claim": "..."},
+            "canonical": {"source_urls": ["https://...", "https://..."], "claim": "..."},
             "schema": CLAIM_INPUT_SCHEMA,
             "aliases": [["context_url", "claim_to_verify"], ["vendor_url", "claim_text"]],
-            "optional": ["vendor_name", "claim_id", "request_type", "verification_type"],
+            "optional": ["vendor_url", "source_urls", "vendor_name", "claim_id", "request_type", "verification_type"],
         },
         "output": {
             "delivery": "inline_after_successful_payment_and_execution",
@@ -595,8 +677,10 @@ async def root():
         "price": PRICE,
         "asset": "USDC",
         "network": NETWORK,
-        "what_it_does": "Verify a public vendor or product claim against a supplied public source URL.",
-        "best_for": BUYER_QUERIES,
+        "what_it_does": "Match one precise vendor or product claim against up to three buyer-supplied public URLs and return evidence snippets plus a conservative verdict.",
+        "best_for": BEST_FOR,
+        "not_for": NOT_FOR,
+        "production_proof": PAID_CANARY,
         "discover": {
             "x402": f"{PUBLIC_ORIGIN}/.well-known/x402",
             "agent": f"{PUBLIC_ORIGIN}/.well-known/agent.json",
@@ -645,7 +729,7 @@ async def robots():
 async def llms():
     return (
         "# capi2 Claim Verify\n\n"
-        "Paid x402 API for autonomous agents that need public-source evidence before trusting a vendor, product, security, compliance, procurement or commercial claim.\n\n"
+        "Paid x402 API for autonomous agents that need evidence snippets from up to three supplied public URLs before trusting a vendor, product, security, compliance, procurement or commercial claim.\n\n"
         f"- Version: {SERVICE_VERSION}\n"
         f"- Price: {PRICE} USDC per successful paid call\n"
         f"- Network: {NETWORK} (Base)\n"
@@ -656,6 +740,7 @@ async def llms():
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- Agent manifest: GET {PUBLIC_ORIGIN}/.well-known/agent.json\n"
         f"- OpenAPI: GET {PUBLIC_ORIGIN}/openapi.json\n\n"
+        "Use when you already have one to three public source URLs and need a conservative structured evidence match. Do not use as an independent audit, legal conclusion, or open-web source discovery service.\n\n"
         "The free dry-run classifies supplied claim/evidence text only and never fetches a remote URL. The paid route performs the external public-source fetch and evidence extraction.\n\n"
         "Canonical paid JSON body:\n"
         "{\"vendor_url\":\"https://example.com/security\",\"claim\":\"Vendor states that customer data is encrypted at rest.\"}\n\n"
@@ -753,31 +838,89 @@ def claim_verify_dry_run(payload: DryRunRequest):
 
 
 def _execute_claim_verify(payload: ClaimVerifyRequest) -> ClaimVerifyResponse:
-    requested_url = payload.resolved_url()
+    request_id = f"cv_{uuid.uuid4().hex[:16]}"
+    checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    requested_urls = payload.resolved_urls()
     claim = payload.resolved_claim()
-    source_url, html = _fetch_public_source(requested_url)
-    page_text = _extract_page_text(html)
-    if len(page_text) < 50:
-        raise HTTPException(status_code=422, detail="source_has_insufficient_public_text")
-    result = _classify_claim(claim, page_text)
+    fetched: list[tuple[str, str, str, dict]] = []
+    source_results: list[dict] = []
+    for requested_url in requested_urls:
+        try:
+            source_url, html = _fetch_public_source(requested_url)
+            page_text = _extract_page_text(html)
+            if len(page_text) < 50:
+                raise HTTPException(status_code=422, detail="source_has_insufficient_public_text")
+            source_result = _classify_claim(claim, page_text)
+            fetched.append((requested_url, source_url, page_text, source_result))
+            source_results.append({
+                "requested_url": requested_url,
+                "final_url": source_url,
+                "status": "checked",
+                "verification_status": source_result["verification_status"],
+                "verdict": source_result["verdict"],
+                "confidence": source_result["confidence"],
+            })
+        except HTTPException as exc:
+            source_results.append({
+                "requested_url": requested_url,
+                "final_url": None,
+                "status": "unavailable",
+                "reason": str(exc.detail),
+            })
+    if not fetched:
+        raise HTTPException(status_code=422, detail={
+            "code": "no_source_could_be_checked",
+            "request_id": request_id,
+            "source_results": source_results,
+        })
+
+    per_source = [source_result for _, _, _, source_result in fetched]
+    statuses = {item["verification_status"] for item in per_source}
+    if "supported" in statuses and "contradicted" in statuses:
+        result = {
+            "verification_status": "uncertain",
+            "verification_result": "uncertain",
+            "verdict": "CONFLICTING_SUPPLIED_SOURCES",
+            "confidence": 0.5,
+            "evidence_summary": "The supplied public sources contain both supporting and contradicting evidence.",
+        }
+    else:
+        priority = "contradicted" if "contradicted" in statuses else "supported" if "supported" in statuses else "uncertain"
+        candidates = [item for item in per_source if item["verification_status"] == priority]
+        result = max(candidates, key=lambda item: item["confidence"])
+
+    evidence: list[EvidenceSnippet] = []
+    for _, source_url, _, source_result in fetched:
+        for item in source_result["evidence"]:
+            evidence.append(EvidenceSnippet(**item, source_url=source_url))
+    evidence.sort(key=lambda item: item.score, reverse=True)
+    evidence = evidence[:9]
+    failed_count = len(source_results) - len(fetched)
+    caveats = [
+        "Evidence matching only: this is not an audit, certification, or independent proof of the underlying claim.",
+        "Only the public URLs supplied by the buyer were checked; capi2 did not search the wider web.",
+        "Absence of evidence in the supplied sources is not proof that a claim is false.",
+        "Regulated or high-impact decisions require independent review by an appropriately authorized party.",
+    ]
+    if failed_count:
+        caveats.append(f"{failed_count} supplied source(s) could not be checked; partial evidence was used.")
     return ClaimVerifyResponse(
         claim_id=payload.claim_id,
         vendor_name=payload.vendor_name,
-        vendor_url=requested_url,
+        vendor_url=fetched[0][0],
         claim=claim,
         verification_status=result["verification_status"],
         verification_result=result["verification_result"],
         verdict=result["verdict"],
         confidence=result["confidence"],
         evidence_summary=result["evidence_summary"],
-        evidence_source_urls=[source_url],
-        evidence=[EvidenceSnippet(**item) for item in result["evidence"]],
-        caveats=[
-            "This checks only the supplied public URL and does not certify the vendor.",
-            "Absence of evidence on the supplied page is not proof that a claim is false.",
-            "Contradiction detection uses term-scoped negation and lexical evidence overlap; consequential use requires independent review.",
-            "Regulated or high-impact decisions require independent review by an appropriately authorized party.",
-        ],
+        evidence_source_urls=[source_url for _, source_url, _, _ in fetched],
+        evidence=evidence,
+        caveats=caveats,
+        request_id=request_id,
+        checked_at=checked_at,
+        sources_checked=len(fetched),
+        source_results=source_results,
     )
 
 
