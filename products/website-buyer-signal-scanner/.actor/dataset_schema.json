@@ -1,0 +1,21 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Website buyer signals",
+      "transformation": {"fields": ["domain", "status", "technologies", "contacts", "buyer_signals", "summary"]},
+      "display": {
+        "component": "table",
+        "properties": {
+          "domain": {"label": "Domain", "format": "text"},
+          "status": {"label": "Status", "format": "text"},
+          "technologies": {"label": "Technologies", "format": "array"},
+          "contacts": {"label": "Public contacts", "format": "object"},
+          "buyer_signals": {"label": "Buyer signals", "format": "array"},
+          "summary": {"label": "Summary", "format": "text"}
+        }
+      }
+    }
+  }
+}
