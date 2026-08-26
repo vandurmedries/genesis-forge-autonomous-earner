@@ -63,7 +63,7 @@ jobs:
 
           assert service.NETWORK == "eip155:8453"
           assert service.PRICE == "$0.01"
-          assert service.SERVICE_VERSION == "1.6.0"
+          assert service.SERVICE_VERSION == "1.6.1"
 
           multi_source = service.ClaimVerifyRequest(
               source_urls=["https://example.com/security", "https://example.org/privacy"],
@@ -102,6 +102,7 @@ jobs:
           required_paths = {
               "/health",
               "/.well-known/x402",
+              "/.well-known/x402-service.json",
               "/.well-known/agent.json",
               "/v1/quote",
               "/v1/claim-verify",
@@ -117,6 +118,10 @@ jobs:
           health = client.get("/health")
           assert health.status_code == 200, health.text
           assert health.json().get("ok") is True
+
+          true402_manifest = client.get("/.well-known/x402-service.json")
+          assert true402_manifest.status_code == 200, true402_manifest.text
+          assert true402_manifest.json()["version"] == "1.6.1"
 
           quote = client.get("/v1/quote")
           assert quote.status_code == 200, quote.text
