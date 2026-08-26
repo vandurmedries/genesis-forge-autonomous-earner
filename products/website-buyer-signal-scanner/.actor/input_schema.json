@@ -1,0 +1,27 @@
+{
+  "title": "Website Buyer Signal Scanner input",
+  "description": "Scan up to 100 public websites for technologies, public contacts, and actionable buyer signals.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "startUrls": {
+      "title": "Website URLs",
+      "type": "array",
+      "description": "Public website homepages to scan, up to 100 per run.",
+      "editor": "requestListSources",
+      "default": [{"url": "https://example.com"}]
+    },
+    "domains": {
+      "title": "Domains",
+      "type": "array",
+      "description": "Optional plain domains such as example.com.",
+      "editor": "stringList"
+    },
+    "includeContacts": {
+      "title": "Extract public contacts",
+      "type": "boolean",
+      "description": "Extract public emails, phone numbers, social profiles, and contact-page links found on each homepage.",
+      "default": true
+    }
+  }
+}
