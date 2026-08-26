@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 os.environ.setdefault("CAPI2_AGENT402_REGISTER", "false")
 os.environ.setdefault("CAPI2_TRUE402_REGISTER", "false")
+os.environ.setdefault("CAPI2_X402_FACILITATOR", "https://facilitator.xpay.sh")
 
 from apify import Actor
 
