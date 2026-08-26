@@ -1,6 +1,8 @@
 # capi2 x402 Claim Verify
 
-Paid agent-to-agent vendor-claim verification API. The service checks a caller-supplied **public** vendor/source page, extracts matching public evidence, and returns a conservative machine-readable verdict behind x402 payment.
+Paid agent-to-agent supplied-source evidence API. The service checks up to three caller-supplied **public** vendor/source pages, extracts matching public evidence, and returns a conservative machine-readable verdict behind x402 payment.
+
+Use this service when the buyer already has relevant public URLs and needs structured evidence snippets. It is not an independent audit, certification, legal conclusion, or open-web source discovery service.
 
 ## Autonomous buyer flow
 
@@ -33,7 +35,10 @@ Production defaults:
 
 ```json
 {
-  "vendor_url": "https://example.com/security",
+  "source_urls": [
+    "https://example.com/security",
+    "https://example.com/privacy"
+  ],
   "claim": "Example publishes a security policy"
 }
 ```
@@ -76,11 +81,19 @@ or:
   "evidence_summary": "...",
   "evidence_source_urls": ["https://example.com/security"],
   "evidence": [{"text": "...", "score": 0.9}],
-  "caveats": ["..."]
+  "caveats": ["..."],
+  "request_id": "cv_018f5f8f0c2b4f7a",
+  "checked_at": "2026-08-26T15:00:00Z",
+  "sources_checked": 2,
+  "source_results": [{"requested_url": "...", "final_url": "...", "status": "checked"}]
 }
 ```
 
 Both `verification_status` and `verification_result` expose the same value so buyer agents with either schema can integrate without a translation layer. Values are `supported`, `contradicted`, or `uncertain`. Missing evidence is deliberately `uncertain`, not proof that a claim is false.
+
+## Verified production payment
+
+PayAPI Market completed a paid production canary for `0.01 USDC` on Base and received HTTP 200. Settlement transaction: `0x4e94a877189eda0e0eb8950a1a1fde68cef7b1dee85edc2bc1e31834617c38fb`. This proves the payment and fulfillment path; it is not represented as an organic customer sale.
 
 ## Marketplace economics
 
