@@ -21,7 +21,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.6.0"
+SERVICE_VERSION = "1.6.1"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
@@ -619,6 +619,7 @@ def _x402_manifest() -> dict:
         ],
         "free_endpoints": [
             "/", "/health", "/robots.txt", "/llms.txt", "/.well-known/x402",
+            "/.well-known/x402-service.json",
             "/.well-known/agent.json", "/openapi.json", "/v1/quote", "/v1/examples",
             "/v1/claim-verify/schema", "/v1/claim-verify/dry-run",
         ],
@@ -638,6 +639,7 @@ def _manifest() -> dict:
         "production_proof": PAID_CANARY,
         "discovery": {
             "x402": "/.well-known/x402", "agent": "/.well-known/agent.json",
+            "x402_service": "/.well-known/x402-service.json",
             "openapi": "/openapi.json", "llms": "/llms.txt", "robots": "/robots.txt",
             "quote": "/v1/quote", "examples": "/v1/examples",
             "dry_run": "/v1/claim-verify/dry-run", "bazaar_extension": True,
@@ -683,6 +685,7 @@ async def root():
         "production_proof": PAID_CANARY,
         "discover": {
             "x402": f"{PUBLIC_ORIGIN}/.well-known/x402",
+            "x402_service": f"{PUBLIC_ORIGIN}/.well-known/x402-service.json",
             "agent": f"{PUBLIC_ORIGIN}/.well-known/agent.json",
             "openapi": f"{PUBLIC_ORIGIN}/openapi.json",
             "llms": f"{PUBLIC_ORIGIN}/llms.txt",
@@ -718,6 +721,7 @@ async def robots():
         "User-agent: *\n"
         "Allow: /\n"
         f"# x402: {PUBLIC_ORIGIN}/.well-known/x402\n"
+        f"# x402-service: {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
         f"# agent: {PUBLIC_ORIGIN}/.well-known/agent.json\n"
         f"# llms: {PUBLIC_ORIGIN}/llms.txt\n"
         f"# openapi: {PUBLIC_ORIGIN}/openapi.json\n"
@@ -738,6 +742,7 @@ async def llms():
         f"- Free verdict dry-run: POST {PUBLIC_ORIGIN}/v1/claim-verify/dry-run\n"
         f"- Quote: GET {PUBLIC_ORIGIN}/v1/quote\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
+        f"- True402 compatibility manifest: GET {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
         f"- Agent manifest: GET {PUBLIC_ORIGIN}/.well-known/agent.json\n"
         f"- OpenAPI: GET {PUBLIC_ORIGIN}/openapi.json\n\n"
         "Use when you already have one to three public source URLs and need a conservative structured evidence match. Do not use as an independent audit, legal conclusion, or open-web source discovery service.\n\n"
@@ -750,6 +755,12 @@ async def llms():
 
 @app.get("/.well-known/x402")
 async def x402_manifest():
+    return _x402_manifest()
+
+
+@app.get("/.well-known/x402-service.json")
+async def x402_service_manifest():
+    """True402-compatible alias for updating an already registered seller URL."""
     return _x402_manifest()
 
 
