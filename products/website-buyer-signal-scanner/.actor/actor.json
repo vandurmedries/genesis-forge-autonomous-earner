@@ -1,0 +1,17 @@
+{
+  "actorSpecification": 1,
+  "name": "website-buyer-signal-scanner",
+  "title": "Website Buyer Signal Scanner",
+  "description": "Bulk tech-stack, public contact, and actionable sales-opportunity detection for websites.",
+  "version": "1.0",
+  "buildTag": "latest",
+  "usesStandbyMode": false,
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 512,
+  "dockerfile": "./Dockerfile",
+  "dockerContextDir": "..",
+  "readme": "./ACTOR.md",
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {"dataset": "./dataset_schema.json"}
+}
