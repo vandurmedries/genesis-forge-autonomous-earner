@@ -13,6 +13,8 @@ os.environ.setdefault("CAPI2_X402_FACILITATOR", "https://facilitator.xpay.sh")
 import x402_runtime_fix  # noqa: F401,E402
 import app as _app_module  # noqa: E402
 from claim_classifier_fix import install as _install_claim_classifier  # noqa: E402
+from classifier_regression_route import install as _install_classifier_regression_route  # noqa: E402
 
 _install_claim_classifier(_app_module)
+_install_classifier_regression_route(_app_module)
 from sales_app import app  # noqa: E402,F401

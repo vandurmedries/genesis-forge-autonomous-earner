@@ -14,6 +14,7 @@ from .claim_classifier_fix import (
     CLASSIFIER_REVISION as _CLASSIFIER_REVISION,
     install as _install_claim_classifier,
 )
+from .classifier_regression_route import install as _install_classifier_regression_route
 from .settlement_observability import install as _install_settlement_observability
 
 _XPAY_FACILITATOR = "https://facilitator.xpay.sh"
@@ -28,6 +29,7 @@ if _effective_facilitator != _XPAY_FACILITATOR:
     )
 
 _install_claim_classifier(_app_module)
+_install_classifier_regression_route(_app_module)
 _install_settlement_observability(_sales_app.server, _effective_facilitator)
 print(
     "capi2-runtime: "
