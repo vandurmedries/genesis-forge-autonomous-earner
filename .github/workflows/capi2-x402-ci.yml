@@ -63,6 +63,40 @@ jobs:
 
           assert service.NETWORK == "eip155:8453"
           assert service.PRICE == "$0.01"
+          assert service.SERVICE_VERSION == "1.6.0"
+
+          multi_source = service.ClaimVerifyRequest(
+              source_urls=["https://example.com/security", "https://example.org/privacy"],
+              claim="Customer data is encrypted at rest.",
+          )
+          assert len(multi_source.resolved_urls()) == 2
+          for field in ("request_id", "checked_at", "sources_checked", "source_results"):
+              assert field in service.CLAIM_OUTPUT_SCHEMA["required"], field
+
+          original_fetch = service._fetch_public_source
+          def fake_fetch(url):
+              if "support.example" in url:
+                  text = "Customer data is encrypted at rest using AES-256 for all stored production records."
+              elif "deny.example" in url:
+                  text = "Customer data at rest is stored in plaintext. This policy applies to all production records."
+              else:
+                  raise service.HTTPException(status_code=422, detail="source_http_status:404")
+              return url, f"<html><body>{text}</body></html>"
+
+          service._fetch_public_source = fake_fetch
+          conflicting = service._execute_claim_verify(service.ClaimVerifyRequest(
+              source_urls=[
+                  "https://support.example/security",
+                  "https://deny.example/security",
+                  "https://broken.example/security",
+              ],
+              claim="Customer data is encrypted at rest.",
+          ))
+          service._fetch_public_source = original_fetch
+          assert conflicting.verdict == "CONFLICTING_SUPPLIED_SOURCES"
+          assert conflicting.verification_status == "uncertain"
+          assert conflicting.sources_checked == 2
+          assert all(item.source_url for item in conflicting.evidence)
 
           route_paths = {getattr(route, "path", None) for route in api.routes}
           required_paths = {
@@ -83,6 +117,13 @@ jobs:
           health = client.get("/health")
           assert health.status_code == 200, health.text
           assert health.json().get("ok") is True
+
+          quote = client.get("/v1/quote")
+          assert quote.status_code == 200, quote.text
+          quote_json = quote.json()
+          assert quote_json["production_proof"]["transaction"].endswith("c38fb")
+          assert quote_json["production_proof"]["scope"].endswith("not an organic customer sale")
+          assert quote_json["not_for"]
 
           openapi_response = client.get("/openapi.json")
           assert openapi_response.status_code == 200, openapi_response.text
