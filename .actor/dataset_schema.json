@@ -1,0 +1,22 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Results",
+      "transformation": {
+        "fields": ["tool", "status", "result", "source", "billable_event"]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "tool": {"label": "Tool", "format": "text"},
+          "status": {"label": "Status", "format": "text"},
+          "result": {"label": "Structured result", "format": "object"},
+          "source": {"label": "Source", "format": "text"},
+          "billable_event": {"label": "Billing event", "format": "text"}
+        }
+      }
+    }
+  }
+}
