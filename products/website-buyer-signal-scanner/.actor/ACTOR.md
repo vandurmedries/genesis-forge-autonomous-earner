@@ -7,7 +7,7 @@ Turn a list of company websites into structured prospect intelligence. Each succ
 - Combine technology detection and public contact discovery in one request.
 - Find explainable outreach angles instead of receiving an opaque lead score.
 - Process up to 100 websites per run through the Console, API, schedules, or Apify MCP.
-- Pay only for successfully scanned websites; failed inputs are returned but are not charged.
+- Pay only for successfully scanned websites; failed inputs are logged without creating a dataset item or charge.
 
 ## Input
 
