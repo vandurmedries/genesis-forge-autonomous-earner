@@ -24,7 +24,7 @@ Each website produces one dataset item containing:
 
 ## Pricing
 
-The Actor uses pay per event. The `site_result` event is emitted once for each successful website result. Recommended launch price: **$0.0009 per successful site ($0.90 per 1,000)**. Failed inputs do not emit a paid event.
+The Actor uses pay per event. Apify's default dataset-item event is emitted once for each successful website result. Launch price: **$0.0009 per successful site ($0.90 per 1,000)**. Failed inputs are logged but do not create a dataset item or paid event.
 
 ## Responsible use and limitations
 
