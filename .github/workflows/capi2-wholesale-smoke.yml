@@ -34,16 +34,27 @@ jobs:
           cat /tmp/health.json || true
           exit 1
 
-      - name: Free wholesale quote
+      - name: Cheapest wholesale quote
         shell: bash
         run: |
           set -euo pipefail
-          code=$(curl -sS -o /tmp/quote.json -w '%{http_code}' \
-            -X POST 'https://capi2-wholesale-router.onrender.com/v1/wholesale/quote' \
-            -H 'content-type: application/json' \
-            --data '{"task":"domain intelligence for example.com","include":"external","top":5}')
-          cat /tmp/quote.json
-          test "$code" = '200'
+          for i in $(seq 1 24); do
+            code=$(curl -sS -o /tmp/quote.json -w '%{http_code}' \
+              -X POST 'https://capi2-wholesale-router.onrender.com/v1/wholesale/quote' \
+              -H 'content-type: application/json' \
+              --data '{"task":"domain intelligence for example.com","include":"external","top":5}' || true)
+            cat /tmp/quote.json || true
+            tier=$(jq -r '.selected_tier // empty' /tmp/quote.json 2>/dev/null || true)
+            price=$(jq -r '.buyer_price_usd // empty' /tmp/quote.json 2>/dev/null || true)
+            underlying=$(jq -r '.underlying_tool_price_usd // empty' /tmp/quote.json 2>/dev/null || true)
+            if [ "$code" = '200' ] && [ "$tier" = 'base' ] && [ "$price" = '0.011' ] && [ "$underlying" = '0.005' ]; then
+              exit 0
+            fi
+            echo "quote attempt $i -> HTTP $code tier=$tier price=$price underlying=$underlying"
+            sleep 10
+          done
+          echo 'cheapest quote did not converge to base tier'
+          exit 1
 
       - name: Unpaid execute must challenge with 402
         shell: bash
