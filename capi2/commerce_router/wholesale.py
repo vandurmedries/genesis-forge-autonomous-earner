@@ -203,6 +203,43 @@ def _tier_for_underlying(price_usd: float) -> Optional[str]:
 
 
 def _resolve_tier(upstream: dict[str, Any]) -> tuple[Optional[str], Optional[float], str]:
+    # Agent402 ranks relevance first. For resale, inspect those ranked matches and
+    # choose the cheapest executable route so capi2 does not overquote the buyer.
+    candidates: list[tuple[float, float, str]] = []
+    results = upstream.get("results") if isinstance(upstream, dict) else None
+    if isinstance(results, list):
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            hint = (
+                result.get("executeVia")
+                or result.get("routeExecuteHint")
+                or result.get("route_execute_hint")
+            )
+            if not isinstance(hint, dict):
+                continue
+            tool = str(hint.get("tool", ""))
+            route_price = _usd(hint.get("price"))
+            underlying = _usd(
+                hint.get("underlyingPriceUsd") or hint.get("underlying_price_usd")
+            )
+            if route_price is None or underlying is None:
+                continue
+            for tier_name, tier in TIERS.items():
+                suffix = tier["upstream_path"].rsplit("/", 1)[-1]
+                if (
+                    tool == suffix
+                    and route_price <= tier["upstream_price_usd"] + 1e-12
+                    and underlying <= tier["underlying_max_usd"] + 1e-12
+                ):
+                    candidates.append((route_price, underlying, tier_name))
+                    break
+        if candidates:
+            _, underlying, tier_name = min(
+                candidates, key=lambda item: (item[0], item[1])
+            )
+            return tier_name, underlying, "cheapest_agent402_executable_match"
+
     hint = _find_hint(upstream)
     if hint:
         tool = str(hint.get("tool", ""))
