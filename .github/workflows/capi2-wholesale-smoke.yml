@@ -1,0 +1,58 @@
+name: capi2 wholesale smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - capi2/commerce_router/wholesale.py
+      - .github/workflows/capi2-wholesale-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for health
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://capi2-wholesale-router.onrender.com/health'
+          for i in $(seq 1 24); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' "$url" || true)
+            if [ "$code" = '200' ]; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "health attempt $i -> HTTP $code"
+            sleep 10
+          done
+          echo 'health never reached HTTP 200'
+          cat /tmp/health.json || true
+          exit 1
+
+      - name: Free wholesale quote
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/quote.json -w '%{http_code}' \
+            -X POST 'https://capi2-wholesale-router.onrender.com/v1/wholesale/quote' \
+            -H 'content-type: application/json' \
+            --data '{"task":"domain intelligence for example.com","include":"external","top":5}')
+          cat /tmp/quote.json
+          test "$code" = '200'
+
+      - name: Unpaid execute must challenge with 402
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/execute.json -w '%{http_code}' \
+            -X POST 'https://capi2-wholesale-router.onrender.com/v1/wholesale/execute' \
+            -H 'content-type: application/json' \
+            --data '{"task":"domain intelligence for example.com","params":{"domain":"example.com"},"include":"external"}')
+          cat /tmp/execute.json
+          echo "HTTP $code"
+          test "$code" = '402'
