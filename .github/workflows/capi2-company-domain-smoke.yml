@@ -1,0 +1,55 @@
+name: capi2 company domain smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - capi2/premium_domain/app.py
+      - .github/workflows/capi2-company-domain-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for premium service
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 24); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' 'https://capi2-company-domain-intel.onrender.com/health' || true)
+            if [ "$code" = '200' ]; then
+              cat /tmp/health.json
+              jq -e '.ok == true and .price == "$0.05" and .network == "eip155:8453"' /tmp/health.json >/dev/null
+              exit 0
+            fi
+            echo "health attempt $i -> HTTP $code"
+            sleep 10
+          done
+          exit 1
+
+      - name: Verify discovery manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS 'https://capi2-company-domain-intel.onrender.com/.well-known/x402' -o /tmp/x402.json
+          cat /tmp/x402.json
+          jq -e '.resources | length == 1' /tmp/x402.json >/dev/null
+          jq -e '.resources[0].price == "$0.05"' /tmp/x402.json >/dev/null
+          jq -e '.resources[0].resource == "https://capi2-company-domain-intel.onrender.com/v1/company/domain-intelligence"' /tmp/x402.json >/dev/null
+
+      - name: Unpaid product call must return 402
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/result.json -w '%{http_code}' \
+            -X POST 'https://capi2-company-domain-intel.onrender.com/v1/company/domain-intelligence' \
+            -H 'content-type: application/json' \
+            --data '{"domain":"example.com","company_name":"Example Domain"}')
+          cat /tmp/result.json || true
+          echo "HTTP $code"
+          test "$code" = '402'
