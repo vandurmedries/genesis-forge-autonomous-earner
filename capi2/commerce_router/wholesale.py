@@ -202,6 +202,10 @@ def _tier_for_underlying(price_usd: float) -> Optional[str]:
     return None
 
 
+def _agent402_tool_for_tier(tier: dict[str, Any]) -> str:
+    return "route-" + tier["upstream_path"].rsplit("/", 1)[-1]
+
+
 def _resolve_tier(upstream: dict[str, Any]) -> tuple[Optional[str], Optional[float], str]:
     # Agent402 ranks relevance first. For resale, inspect those ranked matches and
     # choose the cheapest executable route so capi2 does not overquote the buyer.
@@ -226,9 +230,8 @@ def _resolve_tier(upstream: dict[str, Any]) -> tuple[Optional[str], Optional[flo
             if route_price is None or underlying is None:
                 continue
             for tier_name, tier in TIERS.items():
-                suffix = tier["upstream_path"].rsplit("/", 1)[-1]
                 if (
-                    tool == suffix
+                    tool == _agent402_tool_for_tier(tier)
                     and route_price <= tier["upstream_price_usd"] + 1e-12
                     and underlying <= tier["underlying_max_usd"] + 1e-12
                 ):
@@ -247,7 +250,7 @@ def _resolve_tier(upstream: dict[str, Any]) -> tuple[Optional[str], Optional[flo
             hint.get("underlyingPriceUsd") or hint.get("underlying_price_usd")
         )
         for tier_name, tier in TIERS.items():
-            if tool == tier["upstream_path"].rsplit("/", 1)[-1]:
+            if tool == _agent402_tool_for_tier(tier):
                 return tier_name, underlying, "agent402_route_hint"
         hinted_price = _usd(hint.get("price"))
         if hinted_price is not None:
