@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
@@ -750,6 +750,7 @@ def root() -> dict[str, Any]:
         "intelligence_price": INTEL_PRICE,
         "buyer_queries": BUYER_QUERIES,
         "discover": {
+            "human_page": f"{PUBLIC_ORIGIN}/buy",
             "x402": f"{PUBLIC_ORIGIN}/.well-known/x402",
             "agent": f"{PUBLIC_ORIGIN}/.well-known/agent.json",
             "openapi": f"{PUBLIC_ORIGIN}/openapi.json",
@@ -758,6 +759,11 @@ def root() -> dict[str, Any]:
         },
         "tools": tool_catalog(),
     }
+
+
+@app.get("/buy", response_class=HTMLResponse)
+def buyer_page() -> str:
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>capi2 Agent Utilities</title><style>body{margin:0;background:#101814;color:#eaf3ed;font:16px/1.55 system-ui,sans-serif}.w{max-width:920px;margin:auto;padding:40px}.hero{padding:80px 0 45px}h1{font-size:clamp(44px,8vw,78px);line-height:.95;letter-spacing:-.05em;margin:0 0 22px}p{color:#aec0b7;font-size:19px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{border:1px solid #35443d;border-radius:15px;padding:20px;background:#16231d}.card b{font-size:18px}.btn{display:inline-block;background:#dff06a;color:#15231d;text-decoration:none;font-weight:850;padding:12px 17px;border-radius:10px;margin:10px 8px 0 0}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style></head><body><main class="w"><section class="hero"><h1>Live intelligence. Stable outputs.</h1><p>Pay-per-call public web, domain, API and x402 intelligence plus deterministic hashing and encoding utilities for autonomous agents.</p><a class="btn" href="/v1/catalog">Browse tools and prices</a><a class="btn" href="/docs">Open API docs</a></section><section class="grid"><article class="card"><b>Due diligence</b><p>Inspect public domains, APIs and evidence before an agent acts.</p></article><article class="card"><b>Discovery health</b><p>Audit x402 and agent manifests, pricing and integration readiness.</p></article><article class="card"><b>Deterministic utilities</b><p>Hash, encode, inspect JWTs and canonicalize signing inputs.</p></article></section></main></body></html>"""
 
 
 @app.get("/health")
@@ -836,7 +842,7 @@ def x402_manifest() -> dict[str, Any]:
         "buyer_queries": BUYER_QUERIES,
         "resources": tool_catalog(),
         "free_endpoints": [
-            "/", "/health", "/robots.txt", "/llms.txt", "/.well-known/x402",
+            "/", "/buy", "/health", "/robots.txt", "/llms.txt", "/.well-known/x402",
             "/.well-known/agent.json", "/openapi.json", "/v1/catalog",
         ],
     }
