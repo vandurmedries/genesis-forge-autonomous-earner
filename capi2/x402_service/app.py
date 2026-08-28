@@ -699,7 +699,7 @@ async def root():
 
 @app.get("/buy", response_class=HTMLResponse)
 async def buyer_page():
-    return """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>capi2 Claim Verify — Evidence before trust</title><style>body{margin:0;background:#f4f1e8;color:#15231d;font:16px/1.55 system-ui,sans-serif}.w{max-width:980px;margin:auto;padding:32px}nav{display:flex;justify-content:space-between;font-weight:800}.tag{background:#dff06a;padding:6px 11px;border-radius:999px;font-size:13px}.hero{padding:90px 0 55px;max-width:820px}h1{font-size:clamp(44px,8vw,82px);line-height:.94;letter-spacing:-.055em;margin:0 0 25px}p{color:#5c6b64;font-size:19px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.btn{background:#176b4d;color:white;padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:800}.ghost{color:inherit;border:1px solid #bcc6bf;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:750}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#fffdf7;border:1px solid #d9ddd6;border-radius:15px;padding:20px}.card b{font-size:18px}.sample{margin:55px 0;background:#14231d;color:#eaf4ee;border-radius:18px;padding:25px}.sample p{color:#bdd0c6}.sample code{white-space:pre-wrap}.foot{border-top:1px solid #d9ddd6;padding:24px 0;color:#6b7771;font-size:14px}@media(max-width:720px){.grid{grid-template-columns:1fr}.hero{padding-top:55px}}</style></head><body><main class="w"><nav><span>capi2 Claim Verify</span><span class="tag">$0.01 · x402 · Base USDC</span></nav><section class="hero"><h1>Evidence before trust.</h1><p>Check one vendor or product claim against up to three public sources. Receive cited evidence, contradictory signals, confidence and explicit caveats as structured JSON.</p><div class="actions"><a class="btn" href="/docs#/default/claim_verify_dry_run_v1_claim_verify_dry_run_post">Try the free dry-run</a><a class="ghost" href="/v1/examples">View examples</a><a class="ghost" href="/v1/quote">See live quote</a></div></section><section class="grid"><article class="card"><b>Procurement</b><p>Check supplier statements before they enter a questionnaire or decision memo.</p></article><article class="card"><b>AI agents</b><p>Pay once and receive an inline result—no account or subscription.</p></article><article class="card"><b>Auditable output</b><p>Every verdict includes source URLs, matching text, confidence and limitations.</p></article></section><section class="sample"><b>Paid request</b><p>POST /v1/claim-verify</p><code>{
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>capi2 Claim Verify — Evidence before trust</title><style>body{margin:0;background:#f4f1e8;color:#15231d;font:16px/1.55 system-ui,sans-serif}.w{max-width:980px;margin:auto;padding:32px}nav{display:flex;justify-content:space-between;font-weight:800}.tag{background:#dff06a;padding:6px 11px;border-radius:999px;font-size:13px}.hero{padding:90px 0 55px;max-width:820px}h1{font-size:clamp(44px,8vw,82px);line-height:.94;letter-spacing:-.055em;margin:0 0 25px}p{color:#5c6b64;font-size:19px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.btn{background:#176b4d;color:white;padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:800}.ghost{color:inherit;border:1px solid #bcc6bf;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:750}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#fffdf7;border:1px solid #d9ddd6;border-radius:15px;padding:20px}.card b{font-size:18px}.sample{margin:55px 0;background:#14231d;color:#eaf4ee;border-radius:18px;padding:25px}.sample p{color:#bdd0c6}.sample code{white-space:pre-wrap}.foot{border-top:1px solid #d9ddd6;padding:24px 0;color:#6b7771;font-size:14px}@media(max-width:720px){.grid{grid-template-columns:1fr}.hero{padding-top:55px}}</style></head><body><main class="w"><nav><span>capi2 Claim Verify</span><span class="tag">$0.01 · x402 · Base USDC</span></nav><section class="hero"><h1>Evidence before trust.</h1><p>Check one vendor or product claim against up to three public sources. Receive cited evidence, contradictory signals, confidence and explicit caveats as structured JSON.</p><div class="actions"><a class="btn" href="/v1/samples/hiddenlayer">Open a real public sample</a><a class="ghost" href="/docs#/default/claim_verify_dry_run_v1_claim_verify_dry_run_post">Try the free dry-run</a><a class="ghost" href="/v1/quote">See live quote</a></div></section><section class="grid"><article class="card"><b>Procurement</b><p>Check supplier statements before they enter a questionnaire or decision memo.</p></article><article class="card"><b>AI agents</b><p>Pay once and receive an inline result—no account or subscription.</p></article><article class="card"><b>Auditable output</b><p>Every verdict includes source URLs, matching text, confidence and limitations.</p></article></section><section class="sample"><b>Paid request</b><p>POST /v1/claim-verify</p><code>{
   "vendor_url": "https://vendor.example/security",
   "claim": "Customer data is encrypted at rest"
 }</code></section><footer class="foot">Public-source evidence aid. Not certification or legal advice; consequential decisions require independent review.</footer></main></body></html>"""
@@ -812,6 +812,35 @@ async def examples():
             "path": "/v1/claim-verify/dry-run",
             "request": {"fixture_id": "supporting_evidence_with_unrelated_negation"},
             "expected_verification_status": "supported",
+        },
+    }
+
+
+@app.get("/v1/samples/hiddenlayer")
+async def hiddenlayer_public_sample():
+    return {
+        "protocol": PROTOCOL_VERSION,
+        "sample": True,
+        "generated_from_public_source": True,
+        "vendor_name": "HiddenLayer",
+        "vendor_url": "https://www.hiddenlayer.com/",
+        "claim": "The platform provides AI Discovery, AI Supply Chain Security, AI Attack Simulation and AI Runtime Security.",
+        "verification_status": "supported",
+        "verification_result": "supported",
+        "verdict": "SUPPORTED_BY_SUPPLIED_SOURCE",
+        "confidence_scope": "high confidence that the supplied page publishes this representation; no independent product testing performed",
+        "evidence_summary": "HiddenLayer's public platform page names AI Discovery, AI Supply Chain Security, AI Attack Simulation and AI Runtime Security and describes the corresponding functions.",
+        "evidence_source_urls": ["https://www.hiddenlayer.com/"],
+        "caveats": [
+            "This sample checks public supplied material and does not certify HiddenLayer.",
+            "A vendor's own page supports the existence of its published representation, not independent proof of product performance.",
+            "Procurement, security and regulated decisions require additional independent evidence and human review.",
+        ],
+        "next": {
+            "free_dry_run": "/v1/claim-verify/dry-run",
+            "paid_endpoint": "POST /v1/claim-verify",
+            "quote": "/v1/quote",
+            "docs": "/docs",
         },
     }
 
