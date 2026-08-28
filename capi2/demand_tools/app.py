@@ -9,6 +9,7 @@ from typing import Any
 
 import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
@@ -26,8 +27,8 @@ AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "tru
 
 app = FastAPI(
     title="capi2 Demand Microtools",
-    version="1.0.0",
-    description="Ultra-low-cost deterministic agent utilities tuned to high-demand x402 buyer queries: hashing, encoding and JWT decoding.",
+    version="1.1.0",
+    description="Deterministic hashing, encoding, JWT inspection and canonical JSON utilities for agents that need stable machine-readable results.",
 )
 
 facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
@@ -145,7 +146,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "capi2-demand-tools",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "network": NETWORK,
         "asset": "USDC",
         "price_per_tool": MICRO_PRICE,
@@ -153,6 +154,11 @@ def health() -> dict[str, Any]:
         "paid_tools": len(tool_catalog()),
         "positioning": "high-demand deterministic x402 utility lane",
     }
+
+
+@app.get("/", response_class=HTMLResponse)
+def homepage() -> str:
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>capi2 Agent Utilities</title><style>body{margin:0;background:#101814;color:#eaf3ed;font:16px/1.55 system-ui,sans-serif}.w{max-width:920px;margin:auto;padding:40px}.hero{padding:80px 0 45px}h1{font-size:clamp(44px,8vw,78px);line-height:.95;letter-spacing:-.05em;margin:0 0 22px}p{color:#aec0b7;font-size:19px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{border:1px solid #35443d;border-radius:15px;padding:20px;background:#16231d}.card b{font-size:18px}.btn{display:inline-block;background:#dff06a;color:#15231d;text-decoration:none;font-weight:850;padding:12px 17px;border-radius:10px;margin:10px 8px 0 0}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style></head><body><main class="w"><section class="hero"><h1>Small utilities. Stable outputs.</h1><p>Pay-per-call hashing, Base64, JWT inspection and canonical JSON for autonomous agents. Deterministic JSON responses with no account or subscription.</p><a class="btn" href="/v1/catalog">Browse tools and prices</a><a class="btn" href="/docs">Open API docs</a></section><section class="grid"><article class="card"><b>Integrity</b><p>SHA-256 and SHA-512 digests for checksums, cache keys and evidence fingerprints.</p></article><article class="card"><b>Interoperability</b><p>Encode and decode Base64 payloads or inspect JWT claims.</p></article><article class="card"><b>Stable signing input</b><p>Canonicalize JSON before hashing, comparison or signatures.</p></article></section></main></body></html>"""
 
 
 @app.get("/.well-known/x402")

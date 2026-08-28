@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
@@ -25,8 +26,8 @@ MAX_REDIRECTS = 3
 
 app = FastAPI(
     title="capi2 Claim Verify",
-    version="1.3.2",
-    description="Agent-discoverable public-evidence vendor claim verification with x402 payment on Base USDC.",
+    version="1.4.0",
+    description="Check one public vendor claim against a supplied source and return cited evidence, contradictions, confidence and a procurement-ready verdict.",
 )
 
 facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
@@ -44,7 +45,7 @@ routes = {
             )
         ],
         mime_type="application/json",
-        description="Verify one public vendor claim against a supplied public source URL and return machine-readable evidence.",
+        description="Check one public vendor or product claim against a supplied public source. Returns cited evidence, contradictions, confidence, caveats and a procurement-ready verdict.",
     )
 }
 
@@ -84,7 +85,7 @@ class EvidenceSnippet(BaseModel):
 
 
 class ClaimVerifyResponse(BaseModel):
-    protocol: str = "capi2.claim_verify/1.3.2"
+    protocol: str = "capi2.claim_verify/1.4.0"
     claim_id: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_url: str
@@ -277,7 +278,7 @@ def _quote() -> dict:
 def _x402_manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "description": "Paid public-evidence vendor claim verification for autonomous agents.",
+        "description": "Check a vendor or product claim against a public source. Get cited evidence, contradictions, confidence and a procurement-ready verdict.",
         "homepage": "https://capi2-claim-verify.onrender.com",
         "protocol": "x402",
         "network": NETWORK,
@@ -289,7 +290,7 @@ def _x402_manifest() -> dict:
                 "endpoint": "POST /v1/claim-verify",
                 "method": "POST",
                 "price_usd": _price_usd(),
-                "summary": "Verify one public vendor claim against a supplied public source URL and return machine-readable evidence.",
+                "summary": "Check one public vendor or product claim against a supplied source and return cited evidence, contradictions, confidence, caveats and a procurement-ready verdict.",
             }
         ],
         "free_endpoints": [
@@ -298,6 +299,7 @@ def _x402_manifest() -> dict:
             "/.well-known/agent.json",
             "/openapi.json",
             "/v1/quote",
+            "/v1/sample",
             "/v1/claim-verify/schema",
         ],
     }
@@ -306,8 +308,8 @@ def _x402_manifest() -> dict:
 def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
-        "protocol": "capi2.claim_verify/1.3.2",
-        "description": "Verify a public vendor claim against a supplied public source URL.",
+        "protocol": "capi2.claim_verify/1.4.0",
+        "description": "Check a public vendor or product claim and return a cited, machine-readable verdict for procurement and agent workflows.",
         "discovery": {
             "x402": "/.well-known/x402",
             "agent": "/.well-known/agent.json",
@@ -345,13 +347,51 @@ async def health():
     return {
         "ok": True,
         "service": "capi2-claim-verify",
-        "version": "1.3.2",
+        "version": "1.4.0",
         "network": NETWORK,
         "price": PRICE,
         "settlement": "USDC on Base",
         "pay_to": PAY_TO,
         "x402_manifest": "/.well-known/x402",
         "autonomous_flow": "discover -> quote -> x402 pay -> execute -> inline result",
+    }
+
+
+@app.get("/", response_class=HTMLResponse)
+async def homepage():
+    return """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>capi2 Claim Verify — Evidence before trust</title>
+<style>
+body{margin:0;background:#f4f1e8;color:#15231d;font:16px/1.55 system-ui,sans-serif}.w{max-width:980px;margin:auto;padding:32px}nav{display:flex;justify-content:space-between;font-weight:800}.tag{background:#dff06a;padding:6px 11px;border-radius:999px;font-size:13px}.hero{padding:90px 0 55px;max-width:820px}h1{font-size:clamp(44px,8vw,82px);line-height:.94;letter-spacing:-.055em;margin:0 0 25px}p{color:#5c6b64;font-size:19px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}a{color:inherit}.btn{background:#176b4d;color:#fff;padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:800}.ghost{border:1px solid #bcc6bf;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:750}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#fffdf7;border:1px solid #d9ddd6;border-radius:15px;padding:20px}.card b{font-size:18px}.sample{margin:55px 0;background:#14231d;color:#eaf4ee;border-radius:18px;padding:25px}.sample p{color:#bdd0c6}.sample code{white-space:pre-wrap}.foot{border-top:1px solid #d9ddd6;padding:24px 0;color:#6b7771;font-size:14px}@media(max-width:720px){.grid{grid-template-columns:1fr}.hero{padding-top:55px}}
+</style></head><body><main class="w"><nav><span>capi2 Claim Verify</span><span class="tag">x402 · Base USDC</span></nav>
+<section class="hero"><h1>Evidence before trust.</h1><p>Check one vendor or product claim against a public source. Receive cited evidence, contradictory signals, confidence and explicit caveats as structured JSON.</p><div class="actions"><a class="btn" href="/v1/sample">View free sample</a><a class="ghost" href="/docs">Open API docs</a><a class="ghost" href="/v1/quote">See live quote</a></div></section>
+<section class="grid"><article class="card"><b>Procurement</b><p>Check a supplier statement before it enters a questionnaire or decision memo.</p></article><article class="card"><b>AI agents</b><p>Pay once, receive an inline deterministic result—no account or subscription.</p></article><article class="card"><b>Auditable output</b><p>Every verdict includes its source URL, matching text, confidence and limitations.</p></article></section>
+<section class="sample"><b>Paid route</b><p>POST /v1/claim-verify · $0.01 USDC on Base</p><code>{
+  "vendor_url": "https://vendor.example/security",
+  "claim": "Customer data is encrypted at rest"
+}</code></section>
+<footer class="foot">Public-source evidence aid. Not certification or legal advice; consequential decisions require independent review.</footer></main></body></html>"""
+
+
+@app.get("/v1/sample")
+async def claim_verify_sample():
+    return {
+        "protocol": "capi2.claim_verify/1.4.0",
+        "sample": True,
+        "vendor_name": "Example Cloud",
+        "vendor_url": "https://vendor.example/security",
+        "claim": "Customer data is encrypted at rest",
+        "verification_status": "supported",
+        "verdict": "SUPPORTED_BY_SUPPLIED_SOURCE",
+        "confidence": 0.88,
+        "evidence_summary": "Customer content is encrypted at rest using industry-standard encryption.",
+        "evidence_source_urls": ["https://vendor.example/security"],
+        "caveats": [
+            "Illustrative response; no live source was fetched for this sample.",
+            "A paid call checks only the supplied public URL and does not certify the vendor.",
+        ],
+        "next": {"quote": "/v1/quote", "paid_endpoint": "POST /v1/claim-verify", "docs": "/docs"},
     }
 
 
