@@ -19,7 +19,15 @@ from .app import (
     CLAIM_OUTPUT_SCHEMA,
     CLAIM_OUTPUT_EXAMPLE,
 )
-from .sales_app import PACK_BUYER_QUERIES, PACK_PATH, PACK_PRICE, SALES_INTENTS
+from .sales_app import (
+    DDQ_BUYER_QUERIES,
+    DDQ_PATH,
+    DDQ_PRICE,
+    PACK_BUYER_QUERIES,
+    PACK_PATH,
+    PACK_PRICE,
+    SALES_INTENTS,
+)
 
 
 _GENERIC_INTENT = {
@@ -140,6 +148,43 @@ def build_openapi() -> dict:
             },
         }
     }
+    ddq_schema = {
+        "type": "object",
+        "properties": {
+            "claims": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 10,
+                "items": CLAIM_INPUT_SCHEMA,
+            }
+        },
+        "required": ["claims"],
+    }
+    paths[DDQ_PATH] = {
+        "post": {
+            "operationId": "ai_vendor_ddq_evidence_pack",
+            "summary": "Verify an AI vendor due-diligence evidence pack",
+            "description": f"Verify three to ten AI-vendor claims for {DDQ_PRICE} USDC on Base via x402.",
+            "tags": ["AI governance", "vendor due diligence", "procurement", "DDQ"],
+            "x-payment-info": {
+                "price": {"mode": "fixed", "currency": "USD", "amount": DDQ_PRICE.lstrip("$")},
+                "protocols": [{"x402": {}}],
+                "network": NETWORK,
+                "asset": "USDC",
+                "payTo": PAY_TO,
+                "paymentHeader": "PAYMENT-SIGNATURE",
+                "settlementHeader": "PAYMENT-RESPONSE",
+                "buyerIntents": DDQ_BUYER_QUERIES,
+            },
+            "x-buyer-intents": DDQ_BUYER_QUERIES,
+            "requestBody": {"required": True, "content": {"application/json": {"schema": ddq_schema}}},
+            "responses": {
+                "200": {"description": "AI-vendor due-diligence evidence results"},
+                "402": {"description": "Payment Required"},
+                "422": {"description": "Invalid pack or supplied source"},
+            },
+        }
+    }
 
     return {
         "openapi": "3.1.0",
@@ -172,7 +217,7 @@ def install() -> None:
     app.openapi_schema = None
     app.openapi = deterministic_openapi
     print(
-        f"capi2-discovery-contract: installed routes={2 + len(SALES_INTENTS)} base_price={PRICE} pack_price={PACK_PRICE} origin={PUBLIC_ORIGIN}",
+        f"capi2-discovery-contract: installed routes={3 + len(SALES_INTENTS)} base_price={PRICE} pack_price={PACK_PRICE} ddq_price={DDQ_PRICE} origin={PUBLIC_ORIGIN}",
         flush=True,
     )
 

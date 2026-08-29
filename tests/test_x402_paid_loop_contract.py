@@ -121,6 +121,19 @@ class PaidLoopContractTests(unittest.TestCase):
         self.assertEqual(challenge["accepts"][0]["network"], "eip155:8453")
         self.assertEqual(challenge["accepts"][0]["amount"], "40000")
 
+    def test_ai_vendor_ddq_pack_validates_and_challenges_for_twenty_five_cents(self):
+        pack = {"claims": [self.request_body, self.request_body, self.request_body]}
+
+        validation = self.client.post("/v1/ai-vendor-ddq-evidence-pack/validate", json=pack)
+        self.assertEqual(validation.status_code, 200)
+        self.assertEqual(validation.json()["price"], "$0.25")
+
+        unpaid = self.client.post("/v1/ai-vendor-ddq-evidence-pack", json=pack)
+        self.assertEqual(unpaid.status_code, 402)
+        challenge = self._decode_header(unpaid.headers["payment-required"])
+        self.assertEqual(challenge["x402Version"], 2)
+        self.assertEqual(challenge["accepts"][0]["amount"], "250000")
+
 
 if __name__ == "__main__":
     unittest.main()

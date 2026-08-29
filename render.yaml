@@ -19,3 +19,5 @@ services:
         value: "$0.01"
       - key: CAPI2_VENDOR_RISK_PACK_PRICE
         value: "$0.04"
+      - key: CAPI2_AI_VENDOR_DDQ_PRICE
+        value: "$0.25"

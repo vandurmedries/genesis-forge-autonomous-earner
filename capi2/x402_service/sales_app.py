@@ -92,6 +92,14 @@ PACK_BUYER_QUERIES = [
     "check a vendor risk questionnaire against public evidence",
     "verify up to five procurement claims",
 ]
+DDQ_PATH = "/v1/ai-vendor-ddq-evidence-pack"
+DDQ_PRICE = os.getenv("CAPI2_AI_VENDOR_DDQ_PRICE", "$0.25")
+DDQ_BUYER_QUERIES = [
+    "evaluate an AI vendor for business use",
+    "verify AI vendor due diligence questionnaire answers",
+    "check AI governance vendor claims against evidence",
+    "review an AI tool before procurement",
+]
 
 
 class VendorRiskPackRequest(BaseModel):
@@ -101,6 +109,19 @@ class VendorRiskPackRequest(BaseModel):
 class VendorRiskPackResponse(BaseModel):
     product: str
     claims_processed: int
+    results: list[ClaimVerifyResponse]
+
+
+class AiVendorDdqRequest(BaseModel):
+    claims: list[ClaimVerifyRequest] = Field(min_length=3, max_length=10)
+
+
+class AiVendorDdqResponse(BaseModel):
+    product: str
+    claims_processed: int
+    supported: int
+    contradicted: int
+    uncertain: int
     results: list[ClaimVerifyResponse]
 
 
@@ -201,6 +222,14 @@ sales_routes[f"POST {PACK_PATH}"] = RouteConfig(
         }
     },
 )
+sales_routes[f"POST {DDQ_PATH}"] = RouteConfig(
+    accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=DDQ_PRICE, network=NETWORK)],
+    resource=f"{PUBLIC_ORIGIN}{DDQ_PATH}",
+    mime_type="application/json",
+    description="Verify three to ten AI-vendor due-diligence claims against supplied public evidence.",
+    service_name="capi2 AI Vendor DDQ Evidence Pack",
+    tags=["AI governance", "vendor due diligence", "procurement", "DDQ"],
+)
 
 # A second payment middleware protects only the intent-specific aliases. The
 # canonical middleware from app.py continues to protect /v1/claim-verify.
@@ -275,6 +304,23 @@ def buyer_catalog():
             "buyer_queries": PACK_BUYER_QUERIES,
             "minimum_claims": 2,
             "maximum_claims": 5,
+        }
+    )
+    resources.append(
+        {
+            "name": "capi2 AI Vendor DDQ Evidence Pack",
+            "method": "POST",
+            "url": f"{PUBLIC_ORIGIN}{DDQ_PATH}",
+            "path": DDQ_PATH,
+            "price": DDQ_PRICE,
+            "asset": "USDC",
+            "network": NETWORK,
+            "payTo": PAY_TO,
+            "summary": "Verify three to ten AI-vendor DDQ claims against supplied public evidence.",
+            "tags": ["AI governance", "vendor due diligence", "procurement", "DDQ"],
+            "buyer_queries": DDQ_BUYER_QUERIES,
+            "minimum_claims": 3,
+            "maximum_claims": 10,
         }
     )
     return {
@@ -358,6 +404,46 @@ def validate_vendor_risk_pack(payload: VendorRiskPackRequest):
         "asset": "USDC",
         "network": NETWORK,
         "paid_endpoint": PACK_PATH,
+    }
+
+
+@app.post(
+    DDQ_PATH,
+    response_model=AiVendorDdqResponse,
+    tags=["AI governance", "vendor due diligence", "procurement", "DDQ"],
+    summary="Verify an AI vendor due-diligence evidence pack",
+    description="Verify three to ten AI-vendor claims in one x402 purchase and return an evidence-backed status summary.",
+    responses={402: {"description": "x402 payment required"}},
+    openapi_extra={
+        "x-price": DDQ_PRICE,
+        "x-x402-price": DDQ_PRICE,
+        "x-x402-network": NETWORK,
+        "x-buyer-intents": DDQ_BUYER_QUERIES,
+        "x-bazaar-discoverable": True,
+    },
+)
+def ai_vendor_ddq_evidence_pack(payload: AiVendorDdqRequest):
+    results = [_execute_claim_verify(claim) for claim in payload.claims]
+    statuses = [result.verification_status for result in results]
+    return AiVendorDdqResponse(
+        product="capi2.ai-vendor-ddq-evidence-pack",
+        claims_processed=len(results),
+        supported=statuses.count("supported"),
+        contradicted=statuses.count("contradicted"),
+        uncertain=statuses.count("uncertain"),
+        results=results,
+    )
+
+
+@app.post(f"{DDQ_PATH}/validate", tags=["discovery", "free"])
+def validate_ai_vendor_ddq(payload: AiVendorDdqRequest):
+    return {
+        "valid": True,
+        "claims": len(payload.claims),
+        "price": DDQ_PRICE,
+        "asset": "USDC",
+        "network": NETWORK,
+        "paid_endpoint": DDQ_PATH,
     }
 
 
