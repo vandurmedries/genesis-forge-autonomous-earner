@@ -21,7 +21,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.6.1"
+SERVICE_VERSION = "1.7.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")

@@ -113,6 +113,7 @@ class PaidLoopContractTests(unittest.TestCase):
         catalog = self.client.get("/v1/buyer-catalog")
         resources = {item["path"]: item for item in catalog.json()["resources"]}
         self.assertIn("/v1/vendor-risk-pack", resources)
+        self.assertEqual(resources["/v1/vendor-risk-pack"]["output_formats"], ["json", "markdown"])
 
         unpaid = self.client.post("/v1/vendor-risk-pack", json=pack)
         self.assertEqual(unpaid.status_code, 402)
@@ -127,6 +128,18 @@ class PaidLoopContractTests(unittest.TestCase):
         validation = self.client.post("/v1/ai-vendor-ddq-evidence-pack/validate", json=pack)
         self.assertEqual(validation.status_code, 200)
         self.assertEqual(validation.json()["price"], "$0.25")
+
+        catalog = self.client.get("/v1/buyer-catalog")
+        resources = {item["path"]: item for item in catalog.json()["resources"]}
+        self.assertEqual(
+            resources["/v1/ai-vendor-ddq-evidence-pack"]["output_formats"],
+            ["json", "markdown"],
+        )
+
+        schema = self.client.get("/openapi.json").json()
+        ddq_output_ref = schema["paths"]["/v1/ai-vendor-ddq-evidence-pack"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        ddq_output = schema["components"]["schemas"][ddq_output_ref.rsplit("/", 1)[-1]]
+        self.assertIn("report_markdown", ddq_output["required"])
 
         unpaid = self.client.post("/v1/ai-vendor-ddq-evidence-pack", json=pack)
         self.assertEqual(unpaid.status_code, 402)

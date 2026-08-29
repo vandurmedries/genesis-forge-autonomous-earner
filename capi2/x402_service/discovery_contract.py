@@ -195,10 +195,11 @@ def build_openapi() -> dict:
                                         "type": "array",
                                         "items": CLAIM_OUTPUT_SCHEMA,
                                     },
+                                    "report_markdown": {"type": "string"},
                                 },
                                 "required": [
                                     "product", "claims_processed", "supported",
-                                    "contradicted", "uncertain", "results",
+                                    "contradicted", "uncertain", "results", "report_markdown",
                                 ],
                             }
                         }
