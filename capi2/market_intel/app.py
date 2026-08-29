@@ -6,7 +6,7 @@ import html
 import json
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -57,11 +57,14 @@ _CACHE: dict[str, Any] = {"expires_at": 0.0, "intelligence": None}
 
 class LaunchBriefRequest(BaseModel):
     category: str = Field(min_length=3, max_length=100)
-    target_buyer: str | None = Field(default=None, max_length=300)
+    # Keep the public service importable on Python 3.9 as well as the newer
+    # Render runtime. Pydantic evaluates model annotations at import time and
+    # cannot resolve ``str | None`` on Python versions before 3.10.
+    target_buyer: Optional[str] = Field(default=None, max_length=300)
     max_build_days: int = Field(default=7, ge=1, le=30)
 
 
-def _public_base_url(request: Request | None = None) -> str:
+def _public_base_url(request: Optional[Request] = None) -> str:
     configured = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
     if configured:
         return configured

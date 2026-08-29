@@ -1,0 +1,133 @@
+{
+  "schema_version": "capi2.product_catalog/1.0",
+  "source": {
+    "repository": "rarebrief",
+    "runtime": "cloudflare-worker",
+    "protocol": "x402-v2",
+    "network": "eip155:8453",
+    "settlement_asset": "USDC",
+    "deployment_origin": null
+  },
+  "revenue_contract": {
+    "event_type": "capi2.x402.settled",
+    "product_key_field": "product_id",
+    "required_fields": ["event_id", "product_id", "amount", "asset", "network", "transaction_hash"],
+    "payer_storage": "one-way reference only"
+  },
+  "products": [
+    {
+      "product_id": "rarebrief.offer-economics",
+      "operation_id": "auditAiOfferEconomics",
+      "name": "AI Offer Economics Audit",
+      "method": "GET",
+      "path": "/api/x402/offer-economics",
+      "price_usd": "0.01",
+      "revenue_model": "per_call",
+      "buyer_job": "Decide whether an AI service is worth selling before building it.",
+      "tags": ["ai", "business", "pricing", "unit-economics"],
+      "input_schema": {
+        "type": "object",
+        "required": ["price", "deliveryHours", "monthlyBuyers"],
+        "properties": {
+          "price": {"type": "number", "minimum": 1},
+          "deliveryHours": {"type": "number", "minimum": 0.1},
+          "monthlyBuyers": {"type": "integer", "minimum": 1},
+          "monthlyToolCost": {"type": "number", "minimum": 0}
+        }
+      }
+    },
+    {
+      "product_id": "rarebrief.price-floor",
+      "operation_id": "calculateAiServicePriceFloor",
+      "name": "AI Service Price Floor",
+      "method": "GET",
+      "path": "/api/x402/price-floor",
+      "price_usd": "0.02",
+      "revenue_model": "per_call",
+      "buyer_job": "Calculate a defensible minimum service price from delivery economics.",
+      "tags": ["ai", "business", "pricing", "margin"],
+      "input_schema": {
+        "type": "object",
+        "required": ["hourlyCost", "deliveryHours", "targetMarginPct", "monthlyIncomeGoal"],
+        "properties": {
+          "hourlyCost": {"type": "number", "minimum": 1},
+          "deliveryHours": {"type": "number", "minimum": 0.1},
+          "toolCostPerSale": {"type": "number", "minimum": 0},
+          "targetMarginPct": {"type": "number", "minimum": 10, "maximum": 90},
+          "monthlyIncomeGoal": {"type": "number", "minimum": 1},
+          "monthlyCapacityHours": {"type": "number", "minimum": 1}
+        }
+      }
+    },
+    {
+      "product_id": "rarebrief.offer-packager",
+      "operation_id": "packageAiServiceOffer",
+      "name": "Productized AI Offer Packager",
+      "method": "GET",
+      "path": "/api/x402/offer-packager",
+      "price_usd": "0.05",
+      "revenue_model": "per_call",
+      "buyer_job": "Convert an AI capability into a scoped productized-service blueprint.",
+      "tags": ["ai", "business", "offer-design", "sales"],
+      "input_schema": {
+        "type": "object",
+        "required": ["niche", "buyer", "outcome", "mechanism", "deliveryDays", "deliveryHours"],
+        "properties": {
+          "niche": {"type": "string", "minLength": 2, "maxLength": 80},
+          "buyer": {"type": "string", "minLength": 2, "maxLength": 80},
+          "outcome": {"type": "string", "minLength": 2, "maxLength": 120},
+          "mechanism": {"type": "string", "minLength": 2, "maxLength": 120},
+          "deliveryDays": {"type": "integer", "minimum": 1, "maximum": 90},
+          "deliveryHours": {"type": "number", "minimum": 0.5, "maximum": 200},
+          "proofStrength": {"type": "integer", "minimum": 0, "maximum": 5}
+        }
+      }
+    },
+    {
+      "product_id": "rarebrief.lead-priority",
+      "operation_id": "scoreAiServiceLead",
+      "name": "AI Service Lead Priority",
+      "method": "GET",
+      "path": "/api/x402/lead-priority",
+      "price_usd": "0.02",
+      "revenue_model": "per_call",
+      "buyer_job": "Prioritize an AI-service lead before spending human sales time.",
+      "tags": ["ai", "business", "sales", "lead-scoring"],
+      "input_schema": {
+        "type": "object",
+        "required": ["budgetFit", "urgency", "authority", "pain", "trust", "implementationFit"],
+        "properties": {
+          "budgetFit": {"type": "integer", "minimum": 0, "maximum": 5},
+          "urgency": {"type": "integer", "minimum": 0, "maximum": 5},
+          "authority": {"type": "integer", "minimum": 0, "maximum": 5},
+          "pain": {"type": "integer", "minimum": 0, "maximum": 5},
+          "trust": {"type": "integer", "minimum": 0, "maximum": 5},
+          "implementationFit": {"type": "integer", "minimum": 0, "maximum": 5},
+          "dealValue": {"type": "number", "minimum": 0},
+          "hoursToClose": {"type": "number", "minimum": 0.1}
+        }
+      }
+    },
+    {
+      "product_id": "rarebrief.senti-watch",
+      "operation_id": "createSentiWebhookWatch",
+      "name": "Senti Persistent Webhook Watch",
+      "method": "GET",
+      "path": "/api/x402/senti-watch",
+      "price_usd": "0.03",
+      "revenue_model": "time_limited_watch",
+      "buyer_job": "Wait for a future webhook event without keeping an agent process alive.",
+      "tags": ["ai-agents", "automation", "webhooks", "persistence"],
+      "input_schema": {
+        "type": "object",
+        "required": ["label"],
+        "properties": {
+          "label": {"type": "string", "minLength": 2, "maxLength": 80},
+          "matchField": {"type": "string", "minLength": 1, "maxLength": 120},
+          "matchEquals": {"type": "string", "maxLength": 160},
+          "expiresInHours": {"type": "integer", "minimum": 1, "maximum": 168}
+        }
+      }
+    }
+  ]
+}
