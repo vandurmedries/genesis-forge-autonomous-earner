@@ -17,3 +17,5 @@ services:
         value: https://facilitator.xpay.sh
       - key: CAPI2_CLAIM_VERIFY_PRICE
         value: "$0.01"
+      - key: CAPI2_VENDOR_RISK_PACK_PRICE
+        value: "$0.04"

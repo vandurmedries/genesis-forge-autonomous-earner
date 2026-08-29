@@ -102,6 +102,25 @@ class PaidLoopContractTests(unittest.TestCase):
         settle.assert_called_once()
         self.assertTrue(service_module.server._capi2_settlement_observer)
 
+    def test_vendor_risk_pack_is_discoverable_and_challenges_for_four_cents(self):
+        pack = {"claims": [self.request_body, self.request_body]}
+
+        validation = self.client.post("/v1/vendor-risk-pack/validate", json=pack)
+        self.assertEqual(validation.status_code, 200)
+        self.assertTrue(validation.json()["valid"])
+        self.assertEqual(validation.json()["price"], "$0.04")
+
+        catalog = self.client.get("/v1/buyer-catalog")
+        resources = {item["path"]: item for item in catalog.json()["resources"]}
+        self.assertIn("/v1/vendor-risk-pack", resources)
+
+        unpaid = self.client.post("/v1/vendor-risk-pack", json=pack)
+        self.assertEqual(unpaid.status_code, 402)
+        challenge = self._decode_header(unpaid.headers["payment-required"])
+        self.assertEqual(challenge["x402Version"], 2)
+        self.assertEqual(challenge["accepts"][0]["network"], "eip155:8453")
+        self.assertEqual(challenge["accepts"][0]["amount"], "40000")
+
 
 if __name__ == "__main__":
     unittest.main()

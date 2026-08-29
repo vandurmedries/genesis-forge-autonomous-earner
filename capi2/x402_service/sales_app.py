@@ -5,6 +5,10 @@ paid aliases that autonomous buyers can discover by job-to-be-done.
 """
 from __future__ import annotations
 
+import os
+
+from pydantic import BaseModel, Field
+
 try:  # Package import in CI/tests.
     from .app import (
         app,
@@ -80,6 +84,25 @@ SALES_INTENTS = {
     },
 }
 
+PACK_PATH = "/v1/vendor-risk-pack"
+PACK_PRICE = os.getenv("CAPI2_VENDOR_RISK_PACK_PRICE", "$0.04")
+PACK_BUYER_QUERIES = [
+    "verify several vendor claims in one purchase",
+    "batch vendor security due diligence",
+    "check a vendor risk questionnaire against public evidence",
+    "verify up to five procurement claims",
+]
+
+
+class VendorRiskPackRequest(BaseModel):
+    claims: list[ClaimVerifyRequest] = Field(min_length=2, max_length=5)
+
+
+class VendorRiskPackResponse(BaseModel):
+    product: str
+    claims_processed: int
+    results: list[ClaimVerifyResponse]
+
 
 def _bazaar_extension(intent: dict) -> dict:
     example = {
@@ -127,6 +150,57 @@ for path, intent in SALES_INTENTS.items():
         tags=intent["tags"],
         extensions=_bazaar_extension(intent),
     )
+
+sales_routes[f"POST {PACK_PATH}"] = RouteConfig(
+    accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=PACK_PRICE, network=NETWORK)],
+    resource=f"{PUBLIC_ORIGIN}{PACK_PATH}",
+    mime_type="application/json",
+    description="Verify two to five vendor claims in one paid x402 request.",
+    service_name="capi2 Vendor Risk Pack",
+    tags=["vendor risk", "batch verification", "procurement", "security questionnaire"],
+    extensions={
+        "bazaar": {
+            "info": {
+                "input": {
+                    "type": "http",
+                    "method": "POST",
+                    "bodyType": "json",
+                    "body": {"claims": [{"vendor_url": "https://example.com/security", "claim": "Customer data is encrypted at rest."}] * 2},
+                },
+                "output": {"type": "json"},
+            },
+            "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "const": "http"},
+                            "method": {"type": "string", "const": "POST"},
+                            "bodyType": {"type": "string", "const": "json"},
+                            "body": {
+                                "type": "object",
+                                "properties": {
+                                    "claims": {
+                                        "type": "array",
+                                        "minItems": 2,
+                                        "maxItems": 5,
+                                        "items": CLAIM_INPUT_SCHEMA,
+                                    }
+                                },
+                                "required": ["claims"],
+                            },
+                        },
+                        "required": ["type", "method", "bodyType", "body"],
+                    },
+                    "output": {"type": "object"},
+                },
+                "required": ["input"],
+            },
+        }
+    },
+)
 
 # A second payment middleware protects only the intent-specific aliases. The
 # canonical middleware from app.py continues to protect /v1/claim-verify.
@@ -186,6 +260,23 @@ def buyer_catalog():
                 "input_schema": CLAIM_INPUT_SCHEMA,
             }
         )
+    resources.append(
+        {
+            "name": "capi2 Vendor Risk Pack",
+            "method": "POST",
+            "url": f"{PUBLIC_ORIGIN}{PACK_PATH}",
+            "path": PACK_PATH,
+            "price": PACK_PRICE,
+            "asset": "USDC",
+            "network": NETWORK,
+            "payTo": PAY_TO,
+            "summary": "Verify two to five vendor claims in one purchase.",
+            "tags": ["vendor risk", "batch verification", "procurement"],
+            "buyer_queries": PACK_BUYER_QUERIES,
+            "minimum_claims": 2,
+            "maximum_claims": 5,
+        }
+    )
     return {
         "service": "capi2 high-intent claim verification",
         "version": SERVICE_VERSION,
@@ -232,6 +323,42 @@ def procurement_claim_check(payload: ClaimVerifyRequest):
 )
 def data_clause_check(payload: ClaimVerifyRequest):
     return _execute_claim_verify(payload)
+
+
+@app.post(
+    PACK_PATH,
+    response_model=VendorRiskPackResponse,
+    tags=["vendor risk", "batch verification", "procurement"],
+    summary="Verify two to five vendor claims in one purchase",
+    description="Agent-native batch due-diligence pack paid once with x402 on Base.",
+    responses={402: {"description": "x402 payment required"}},
+    openapi_extra={
+        "x-price": PACK_PRICE,
+        "x-x402-price": PACK_PRICE,
+        "x-x402-network": NETWORK,
+        "x-buyer-intents": PACK_BUYER_QUERIES,
+        "x-bazaar-discoverable": True,
+    },
+)
+def vendor_risk_pack(payload: VendorRiskPackRequest):
+    return VendorRiskPackResponse(
+        product="capi2.vendor-risk-pack",
+        claims_processed=len(payload.claims),
+        results=[_execute_claim_verify(claim) for claim in payload.claims],
+    )
+
+
+@app.post(f"{PACK_PATH}/validate", tags=["discovery", "free"])
+def validate_vendor_risk_pack(payload: VendorRiskPackRequest):
+    """Validate a pack before an autonomous buyer creates a payment."""
+    return {
+        "valid": True,
+        "claims": len(payload.claims),
+        "price": PACK_PRICE,
+        "asset": "USDC",
+        "network": NETWORK,
+        "paid_endpoint": PACK_PATH,
+    }
 
 
 # Keep x402scan/OpenAPI discovery self-contained inside the actual Render

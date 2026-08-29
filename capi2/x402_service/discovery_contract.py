@@ -19,7 +19,7 @@ from .app import (
     CLAIM_OUTPUT_SCHEMA,
     CLAIM_OUTPUT_EXAMPLE,
 )
-from .sales_app import SALES_INTENTS
+from .sales_app import PACK_BUYER_QUERIES, PACK_PATH, PACK_PRICE, SALES_INTENTS
 
 
 _GENERIC_INTENT = {
@@ -103,6 +103,43 @@ def build_openapi() -> dict:
     }
     for path, intent in SALES_INTENTS.items():
         paths[path] = {"post": _paid_operation(path, intent)}
+    pack_schema = {
+        "type": "object",
+        "properties": {
+            "claims": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 5,
+                "items": CLAIM_INPUT_SCHEMA,
+            }
+        },
+        "required": ["claims"],
+    }
+    paths[PACK_PATH] = {
+        "post": {
+            "operationId": "vendor_risk_pack",
+            "summary": "Verify two to five vendor claims in one purchase",
+            "description": f"Batch vendor due diligence for {PACK_PRICE} USDC on Base via x402.",
+            "tags": ["vendor risk", "batch verification", "procurement"],
+            "x-payment-info": {
+                "price": {"mode": "fixed", "currency": "USD", "amount": PACK_PRICE.lstrip("$")},
+                "protocols": [{"x402": {}}],
+                "network": NETWORK,
+                "asset": "USDC",
+                "payTo": PAY_TO,
+                "paymentHeader": "PAYMENT-SIGNATURE",
+                "settlementHeader": "PAYMENT-RESPONSE",
+                "buyerIntents": PACK_BUYER_QUERIES,
+            },
+            "x-buyer-intents": PACK_BUYER_QUERIES,
+            "requestBody": {"required": True, "content": {"application/json": {"schema": pack_schema}}},
+            "responses": {
+                "200": {"description": "Batch verification results"},
+                "402": {"description": "Payment Required"},
+                "422": {"description": "Invalid pack or supplied source"},
+            },
+        }
+    }
 
     return {
         "openapi": "3.1.0",
@@ -135,7 +172,7 @@ def install() -> None:
     app.openapi_schema = None
     app.openapi = deterministic_openapi
     print(
-        f"capi2-discovery-contract: installed routes={1 + len(SALES_INTENTS)} price={PRICE} origin={PUBLIC_ORIGIN}",
+        f"capi2-discovery-contract: installed routes={2 + len(SALES_INTENTS)} base_price={PRICE} pack_price={PACK_PRICE} origin={PUBLIC_ORIGIN}",
         flush=True,
     )
 
