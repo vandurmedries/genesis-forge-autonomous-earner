@@ -179,7 +179,31 @@ def build_openapi() -> dict:
             "x-buyer-intents": DDQ_BUYER_QUERIES,
             "requestBody": {"required": True, "content": {"application/json": {"schema": ddq_schema}}},
             "responses": {
-                "200": {"description": "AI-vendor due-diligence evidence results"},
+                "200": {
+                    "description": "AI-vendor due-diligence evidence results",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "product": {"type": "string"},
+                                    "claims_processed": {"type": "integer"},
+                                    "supported": {"type": "integer"},
+                                    "contradicted": {"type": "integer"},
+                                    "uncertain": {"type": "integer"},
+                                    "results": {
+                                        "type": "array",
+                                        "items": CLAIM_OUTPUT_SCHEMA,
+                                    },
+                                },
+                                "required": [
+                                    "product", "claims_processed", "supported",
+                                    "contradicted", "uncertain", "results",
+                                ],
+                            }
+                        }
+                    },
+                },
                 "402": {"description": "Payment Required"},
                 "422": {"description": "Invalid pack or supplied source"},
             },
