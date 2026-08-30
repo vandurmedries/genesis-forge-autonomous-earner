@@ -22,7 +22,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.10.0"
+SERVICE_VERSION = "1.11.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 COMMERCE_PROTOCOL = "capi2.verifiable_commerce/1.0"
 BRAND_PROMISE = "Verifiable commerce for autonomous agents."
@@ -31,6 +31,9 @@ PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
 NETWORK = os.getenv("CAPI2_X402_NETWORK", "eip155:8453")
 FACILITATOR_URL = os.getenv("CAPI2_X402_FACILITATOR", "https://facilitator.payai.network")
 PRICE = os.getenv("CAPI2_CLAIM_VERIFY_PRICE", "$0.01")
+ENDPOINT_CHECK_PRICE = os.getenv("CAPI2_ENDPOINT_CHECK_PRICE", "$49.00")
+LAUNCH_PACK_PRICE = os.getenv("CAPI2_LAUNCH_PACK_PRICE", "$149.00")
+INTEGRATION_PRICE = os.getenv("CAPI2_INTEGRATION_PRICE", "$199.00")
 PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-verify.onrender.com").rstrip("/")
 AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "true"
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
@@ -270,7 +273,25 @@ routes = {
         service_name="capi2 Claim Verify",
         tags=BUYER_TAGS,
         extensions=_bazaar_claim_extension(),
-    )
+    ),
+    "POST /v1/products/endpoint-check": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=ENDPOINT_CHECK_PRICE, network=NETWORK)],
+        resource=f"{PUBLIC_ORIGIN}/v1/products/endpoint-check", mime_type="application/json",
+        description="Automated x402 endpoint readiness audit with evidence and prioritized fixes.",
+        service_name="CAPI2 Endpoint Check", tags=["x402 audit", "agent commerce", "developer tools"],
+    ),
+    "POST /v1/products/launch-pack": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=LAUNCH_PACK_PRICE, network=NETWORK)],
+        resource=f"{PUBLIC_ORIGIN}/v1/products/launch-pack", mime_type="application/json",
+        description="Automated agent-commerce launch plan, discovery review and conversion checklist.",
+        service_name="CAPI2 Agent Commerce Launch Pack", tags=["x402 launch", "MCP", "agent sales"],
+    ),
+    "POST /v1/products/verification-integration": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=INTEGRATION_PRICE, network=NETWORK)],
+        resource=f"{PUBLIC_ORIGIN}/v1/products/verification-integration", mime_type="application/json",
+        description="Implementation-ready verification and settlement integration blueprint.",
+        service_name="CAPI2 Verification Integration", tags=["x402 integration", "settlement", "receipts"],
+    ),
 }
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
@@ -349,6 +370,13 @@ class DryRunRequest(BaseModel):
         if not self.claim or not self.evidence_text:
             raise ValueError("provide fixture_id, or both claim and evidence_text")
         return self
+
+
+class SalesProductRequest(BaseModel):
+    target_url: HttpUrl
+    organization: Optional[str] = Field(default=None, max_length=160)
+    objective: Optional[str] = Field(default=None, max_length=800)
+    contact_ref: Optional[str] = Field(default=None, max_length=200)
 
 
 def _word_list(text: str) -> list[str]:
@@ -706,6 +734,8 @@ async def root():
             "x402_adoption_kit": f"{PUBLIC_ORIGIN}/v1/x402-adoption-kit",
             "verifiable_commerce": f"{PUBLIC_ORIGIN}/v1/verifiable-commerce",
             "free_x402_market_radar": f"{PUBLIC_ORIGIN}/v1/free-x402-market-radar",
+            "sales_funnel": f"{PUBLIC_ORIGIN}/v1/sales",
+            "free_sales_preflight": f"{PUBLIC_ORIGIN}/v1/sales/preflight",
         },
         "buy": {"method": "POST", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
     }
@@ -720,8 +750,8 @@ async def buyer_page():
 <style>
 body{margin:0;background:#081611;color:#f2f7f4;font:17px/1.55 system-ui,sans-serif}.w{max-width:1050px;margin:auto;padding:28px}nav{display:flex;justify-content:space-between;align-items:center;font-weight:800}.tag{color:#0b271b;background:#bdf45b;padding:6px 11px;border-radius:999px;font-size:13px}.hero{padding:90px 0 55px;max-width:900px}h1{font-size:clamp(48px,8vw,88px);line-height:.94;letter-spacing:-.055em;margin:0 0 24px}.hero p{font-size:21px;color:#b9cbc2;max-width:760px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.btn,.ghost{padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:800}.btn{background:#bdf45b;color:#102117}.ghost{color:#eff8f3;border:1px solid #486258}.flow{color:#bdf45b;margin:18px 0 35px;font-weight:750}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#10251c;border:1px solid #294539;border-radius:16px;padding:22px}.card b{font-size:20px}.card p{color:#aabfb5}.foot{margin-top:58px;border-top:1px solid #294539;padding:24px 0;color:#8fa69b;font-size:14px}@media(max-width:760px){.grid{grid-template-columns:1fr}.hero{padding-top:55px}}
 </style></head><body><main class="w"><nav><span>CAPI2</span><span class="tag">x402 · Base USDC · from $0.01</span></nav>
-<section class="hero"><h1>Verifiable commerce for autonomous agents.</h1><p>AI agents can buy services and APIs. CAPI2 provides evidence of who authorized the purchase, what was ordered, what was delivered and how payment settled.</p><div class="flow">Request → authority → policy → payment → delivery → verification → receipt</div><div class="actions"><a class="btn" href="/v1/verifiable-commerce">Explore the product contract</a><a class="ghost" href="/docs">Open API docs</a><a class="ghost" href="/v1/claim-verify/dry-run">Free validation</a></div></section>
-<section class="grid"><article class="card"><b>Agent Preflight</b><p>Check authority, policy and seller claims before an autonomous buyer signs payment.</p></article><article class="card"><b>Delivery Verify</b><p>Compare the delivered result with the agreed claim and retain cited evidence.</p></article><article class="card"><b>Commerce Receipt</b><p>Portable proof connecting request, decision, delivery, verification and settlement.</p></article></section>
+<section class="hero"><h1>Launch agent commerce that buyers can trust.</h1><p>Start with a free readiness check. Choose a fixed-price product. Pay through x402 and receive the complete result inline—without a sales call, account or subscription.</p><div class="flow">Free preflight → fixed quote → x402 payment → instant delivery → evidence → upsell</div><div class="actions"><a class="btn" href="/v1/sales">Start the sales flow</a><a class="ghost" href="/docs#/sales">Open API docs</a><a class="ghost" href="/v1/verifiable-commerce">Product contract</a></div></section>
+<section class="grid"><article class="card"><b>$49 · Endpoint Check</b><p>Readiness score, discovery evidence and prioritized fixes for one public endpoint.</p><a class="ghost" href="/docs#/sales/endpoint_check_v1_products_endpoint_check_post">Buy via x402</a></article><article class="card"><b>$149 · Launch Pack</b><p>Positioning, offer ladder, discovery plan and implementation checklist delivered inline.</p><a class="ghost" href="/docs#/sales/launch_pack_v1_products_launch_pack_post">Buy via x402</a></article><article class="card"><b>$199 · Verification Integration</b><p>Policy, receipt schema, integration steps and acceptance tests for production.</p><a class="ghost" href="/docs#/sales/verification_integration_v1_products_verification_integration_post">Buy via x402</a></article></section>
 <footer class="foot">CAPI2 provides an evidence layer—not certification or legal advice. High-impact decisions require authorized review.</footer></main></body></html>"""
 
 
@@ -798,6 +828,11 @@ async def llms():
         f"- Quote: GET {PUBLIC_ORIGIN}/v1/quote\n"
         f"- Verifiable commerce products: GET {PUBLIC_ORIGIN}/v1/verifiable-commerce\n"
         f"- Free x402 market radar: GET {PUBLIC_ORIGIN}/v1/free-x402-market-radar?q=agent%20verification\n"
+        f"- Sales funnel and fixed-price products: GET {PUBLIC_ORIGIN}/v1/sales\n"
+        f"- Free endpoint readiness preflight: POST {PUBLIC_ORIGIN}/v1/sales/preflight\n"
+        f"- $49 Endpoint Check: POST {PUBLIC_ORIGIN}/v1/products/endpoint-check\n"
+        f"- $149 Launch Pack: POST {PUBLIC_ORIGIN}/v1/products/launch-pack\n"
+        f"- $199 Verification Integration: POST {PUBLIC_ORIGIN}/v1/products/verification-integration\n"
         f"- x402 adoption kit: GET {PUBLIC_ORIGIN}/v1/x402-adoption-kit\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- True402 compatibility manifest: GET {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
@@ -989,6 +1024,72 @@ async def verifiable_commerce():
             "Receipts must be portable across wallets, agent frameworks and payment rails.",
         ],
     }
+
+
+SALES_PRODUCTS = [
+    {"id": "endpoint_check", "name": "x402 Endpoint Check", "price": ENDPOINT_CHECK_PRICE, "endpoint": "/v1/products/endpoint-check", "result": "readiness score, discovery evidence and prioritized fixes"},
+    {"id": "launch_pack", "name": "Agent Commerce Launch Pack", "price": LAUNCH_PACK_PRICE, "endpoint": "/v1/products/launch-pack", "result": "positioning, offer ladder, launch checklist and agent discovery plan"},
+    {"id": "verification_integration", "name": "Verification & Settlement Integration", "price": INTEGRATION_PRICE, "endpoint": "/v1/products/verification-integration", "result": "implementation-ready policy, receipt schema and integration blueprint"},
+]
+
+
+def _probe_sales_target(target_url: str) -> dict:
+    _validate_public_http_url(target_url)
+    parsed = urlparse(target_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    checks = []
+    for name, url in [("target", target_url), ("openapi", f"{origin}/openapi.json"), ("x402", f"{origin}/.well-known/x402"), ("agent", f"{origin}/.well-known/agent.json"), ("llms", f"{origin}/llms.txt")]:
+        try:
+            _validate_public_http_url(url)
+            response = requests.get(url, timeout=8, allow_redirects=False, headers={"user-agent": f"capi2-sales/{SERVICE_VERSION}"})
+            checks.append({"name": name, "url": url, "status": response.status_code, "present": 200 <= response.status_code < 300})
+        except Exception as exc:
+            checks.append({"name": name, "url": url, "status": None, "present": False, "error": exc.__class__.__name__})
+    present = sum(1 for item in checks if item["present"])
+    return {"origin": origin, "checks": checks, "readiness_score": round(100 * present / len(checks))}
+
+
+def _deliver_sales_product(product_id: str, payload: SalesProductRequest) -> dict:
+    product = next(item for item in SALES_PRODUCTS if item["id"] == product_id)
+    audit = _probe_sales_target(str(payload.target_url))
+    missing = [item["name"] for item in audit["checks"] if not item["present"]]
+    delivery = {"protocol": "capi2.sales_delivery/1.0", "order_id": f"ord_{uuid.uuid4().hex[:16]}", "product": product,
+                "organization": payload.organization, "target_url": str(payload.target_url), "objective": payload.objective,
+                "delivered_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "delivery_mode": "inline_after_x402_settlement",
+                "audit": audit, "evidence": {"checked_urls": [item["url"] for item in audit["checks"]], "missing_surfaces": missing},
+                "limitations": ["Public HTTPS surfaces only; no credentials or destructive testing.", "Settlement proves payment, not business outcomes."]}
+    if product_id == "endpoint_check":
+        delivery["deliverables"] = {"priority_fixes": [f"Publish and validate {name}" for name in missing[:3]] or ["Keep discovery metadata current and monitor paid conversion"], "next_offer": "launch_pack"}
+    elif product_id == "launch_pack":
+        delivery["deliverables"] = {"positioning": "Sell one measurable agent outcome, delivered inline with a verifiable receipt.", "offer_ladder": ["free preflight", "fixed-price implementation", "usage-priced x402 calls"], "launch_checklist": ["publish OpenAPI and agent manifests", "show a free proof path", "return price before payment", "emit delivery and settlement evidence", "list on active agent marketplaces"], "priority_fixes": [f"Add {name}" for name in missing], "next_offer": "verification_integration"}
+    else:
+        delivery["deliverables"] = {"policy": {"verify_before_signing": ["resource", "price", "network", "asset", "payTo"], "stop_on": ["policy mismatch", "missing authority", "unverifiable recipient"]}, "receipt_schema": ["order_id", "authority", "policy_decision", "quote", "settlement", "delivery_sha256", "verification", "issued_at"], "integration_steps": ["call free preflight", "inspect HTTP 402 requirements", "apply bounded spend policy", "pay and retry", "hash delivery", "store settlement response and receipt"], "acceptance_tests": ["unpaid request returns 402", "policy mismatch prevents signing", "paid request returns inline delivery", "receipt links order, delivery and settlement"]}
+    return delivery
+
+
+@app.get("/v1/sales", tags=["sales", "discovery"])
+async def sales_catalog():
+    return {"protocol": "capi2.sales_funnel/1.0", "promise": "From free proof to paid, inline agent-commerce delivery.", "steps": ["discover", "free_preflight", "select_fixed_product", "x402_pay", "inline_delivery", "receipt", "upsell"], "free_entry": {"method": "POST", "path": "/v1/sales/preflight"}, "products": SALES_PRODUCTS, "payment": {"protocol": "x402", "network": NETWORK, "asset": "USDC", "payTo": PAY_TO}}
+
+
+@app.post("/v1/sales/preflight", tags=["sales", "free"])
+def sales_preflight(payload: SalesProductRequest):
+    audit = _probe_sales_target(str(payload.target_url))
+    recommended = "endpoint_check" if audit["readiness_score"] < 80 else "launch_pack"
+    product = next(item for item in SALES_PRODUCTS if item["id"] == recommended)
+    return {"protocol": "capi2.sales_preflight/1.0", "billable": False, "audit": audit, "recommended_product": product, "next_step": {"method": "POST", "path": product["endpoint"]}}
+
+
+@app.post("/v1/products/endpoint-check", tags=["sales", "paid"])
+def endpoint_check(payload: SalesProductRequest): return _deliver_sales_product("endpoint_check", payload)
+
+
+@app.post("/v1/products/launch-pack", tags=["sales", "paid"])
+def launch_pack(payload: SalesProductRequest): return _deliver_sales_product("launch_pack", payload)
+
+
+@app.post("/v1/products/verification-integration", tags=["sales", "paid"])
+def verification_integration(payload: SalesProductRequest): return _deliver_sales_product("verification_integration", payload)
 
 
 def _public_json(url: str) -> dict:
