@@ -1,4 +1,6 @@
 import ipaddress
+import hashlib
+import ssl
 import os
 import re
 import socket
@@ -22,7 +24,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.12.0"
+SERVICE_VERSION = "1.13.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 COMMERCE_PROTOCOL = "capi2.verifiable_commerce/1.0"
 BRAND_PROMISE = "Verifiable commerce for autonomous agents."
@@ -35,6 +37,8 @@ ENDPOINT_CHECK_PRICE = os.getenv("CAPI2_ENDPOINT_CHECK_PRICE", "$49.00")
 LAUNCH_PACK_PRICE = os.getenv("CAPI2_LAUNCH_PACK_PRICE", "$149.00")
 INTEGRATION_PRICE = os.getenv("CAPI2_INTEGRATION_PRICE", "$199.00")
 UTILITY_PRICE = os.getenv("CAPI2_UTILITY_PRICE", "$0.01")
+SECURITY_PRICE = os.getenv("CAPI2_SECURITY_PRICE", "$0.02")
+ASSURANCE_REPORT_PRICE = os.getenv("CAPI2_ASSURANCE_REPORT_PRICE", "$29.00")
 PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-verify.onrender.com").rstrip("/")
 AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "true"
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
@@ -301,6 +305,14 @@ routes = {
         accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/x402-preflight", mime_type="application/json", description="Validate an x402 quote against bounded buyer policy before signing.", service_name="CAPI2 x402 Preflight", tags=["x402", "payment safety", "policy"]),
     "POST /v1/tools/manifest-check": RouteConfig(
         accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/manifest-check", mime_type="application/json", description="Check whether an origin publishes usable OpenAPI, x402, agent and llms discovery.", service_name="CAPI2 Manifest Check", tags=["discovery", "manifest", "MCP", "x402"]),
+    "POST /v1/tools/domain-security": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=SECURITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/domain-security", mime_type="application/json", description="Check TLS, DNS resolution and HTTP security headers for one public HTTPS origin.", service_name="CAPI2 Domain Security", tags=["TLS", "DNS", "security headers", "agent utility"]),
+    "POST /v1/tools/page-change": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/page-change", mime_type="application/json", description="Fetch a public page and compare its normalized content hash with a prior observation.", service_name="CAPI2 Page Change", tags=["monitoring", "page diff", "change detection"]),
+    "POST /v1/tools/receipt-verify": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/receipt-verify", mime_type="application/json", description="Structurally verify an agent-commerce receipt and flag missing or inconsistent evidence.", service_name="CAPI2 Receipt Verify", tags=["receipt", "settlement", "agent commerce"]),
+    "POST /v1/reports/commerce-assurance": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=ASSURANCE_REPORT_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/reports/commerce-assurance", mime_type="application/json", description="Combined domain security, discovery and agent-commerce readiness report delivered inline.", service_name="CAPI2 Commerce Assurance Report", tags=["security report", "x402 audit", "agent commerce"]),
 }
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
@@ -401,6 +413,21 @@ class X402PreflightRequest(BaseModel):
     pay_to: str = Field(min_length=6, max_length=160)
     max_price_usd: float = Field(default=1.0, ge=0, le=100000)
     allowed_networks: List[str] = Field(default_factory=lambda: ["eip155:8453"], max_length=20)
+
+
+class PageChangeRequest(BaseModel):
+    url: HttpUrl
+    previous_sha256: Optional[str] = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+    max_chars: int = Field(default=20000, ge=500, le=20000)
+
+
+class ReceiptVerifyRequest(BaseModel):
+    receipt: dict
+
+
+class CommerceAssuranceRequest(BaseModel):
+    target_url: HttpUrl
+    organization: Optional[str] = Field(default=None, max_length=160)
 
 
 def _word_list(text: str) -> list[str]:
@@ -683,7 +710,11 @@ def _x402_manifest() -> dict:
             {"name": "CAPI2 Web Extract", "resource": f"{PUBLIC_ORIGIN}/v1/tools/web-extract", "endpoint": "POST /v1/tools/web-extract", "method": "POST", "price_usd": 0.01, "tags": ["web scrape", "retrieval", "agent utility"], "summary": "Extract compact readable text and metadata from one public web page.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}, "max_chars": {"type": "integer", "minimum": 500, "maximum": 20000, "default": 5000}}}},
             {"name": "CAPI2 Endpoint Health", "resource": f"{PUBLIC_ORIGIN}/v1/tools/endpoint-health", "endpoint": "POST /v1/tools/endpoint-health", "method": "POST", "price_usd": 0.01, "tags": ["uptime", "latency", "endpoint reliability"], "summary": "Probe one public HTTPS endpoint and return status, latency and content metadata.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}}}},
             {"name": "CAPI2 x402 Preflight", "resource": f"{PUBLIC_ORIGIN}/v1/tools/x402-preflight", "endpoint": "POST /v1/tools/x402-preflight", "method": "POST", "price_usd": 0.01, "tags": ["x402", "payment safety", "buyer policy"], "summary": "Validate an x402 quote against bounded buyer policy before signing.", "input_schema": {"type": "object", "required": ["resource", "price_usd", "network", "asset", "pay_to"], "properties": {"resource": {"type": "string", "format": "uri"}, "price_usd": {"type": "number"}, "network": {"type": "string"}, "asset": {"type": "string"}, "pay_to": {"type": "string"}, "max_price_usd": {"type": "number", "default": 1.0}}}},
-            {"name": "CAPI2 Manifest Check", "resource": f"{PUBLIC_ORIGIN}/v1/tools/manifest-check", "endpoint": "POST /v1/tools/manifest-check", "method": "POST", "price_usd": 0.01, "tags": ["x402 discovery", "OpenAPI", "agent manifest"], "summary": "Check whether an origin publishes usable OpenAPI, x402, agent and llms discovery.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}}}}
+            {"name": "CAPI2 Manifest Check", "resource": f"{PUBLIC_ORIGIN}/v1/tools/manifest-check", "endpoint": "POST /v1/tools/manifest-check", "method": "POST", "price_usd": 0.01, "tags": ["x402 discovery", "OpenAPI", "agent manifest"], "summary": "Check whether an origin publishes usable OpenAPI, x402, agent and llms discovery.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}}}},
+            {"name": "CAPI2 Domain Security", "resource": f"{PUBLIC_ORIGIN}/v1/tools/domain-security", "endpoint": "POST /v1/tools/domain-security", "method": "POST", "price_usd": 0.02, "tags": ["TLS", "DNS", "security headers"], "summary": "Check TLS validity, DNS resolution and HTTP security headers for one public HTTPS origin.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}}}},
+            {"name": "CAPI2 Page Change", "resource": f"{PUBLIC_ORIGIN}/v1/tools/page-change", "endpoint": "POST /v1/tools/page-change", "method": "POST", "price_usd": 0.01, "tags": ["monitoring", "page diff", "change detection"], "summary": "Compare current normalized page content with a prior SHA-256 observation.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}, "previous_sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}}}},
+            {"name": "CAPI2 Receipt Verify", "resource": f"{PUBLIC_ORIGIN}/v1/tools/receipt-verify", "endpoint": "POST /v1/tools/receipt-verify", "method": "POST", "price_usd": 0.01, "tags": ["receipt", "settlement", "agent commerce"], "summary": "Structurally verify a commerce receipt and flag missing or inconsistent evidence.", "input_schema": {"type": "object", "required": ["receipt"], "properties": {"receipt": {"type": "object"}}}},
+            {"name": "CAPI2 Commerce Assurance Report", "resource": f"{PUBLIC_ORIGIN}/v1/reports/commerce-assurance", "endpoint": "POST /v1/reports/commerce-assurance", "method": "POST", "price_usd": 29.0, "tags": ["security report", "x402 audit", "agent commerce"], "summary": "Receive a combined domain-security, discovery and commerce-readiness report inline.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}}}}
         ],
         "free_endpoints": [
             "/", "/buy", "/health", "/robots.txt", "/llms.txt", "/.well-known/x402",
@@ -821,8 +852,8 @@ async def health():
         "pay_to": PAY_TO,
         "x402_manifest": "/.well-known/x402",
         "bazaar_discovery": True,
-        "paid_resources": 8,
-        "evergreen_tools": 4,
+        "paid_resources": 12,
+        "evergreen_tools": 7,
         "positioning": BRAND_PROMISE,
         "commerce_protocol": COMMERCE_PROTOCOL,
         "commerce_discovery": "/v1/verifiable-commerce",
@@ -871,6 +902,10 @@ async def llms():
         f"- $0.01 Endpoint Health: POST {PUBLIC_ORIGIN}/v1/tools/endpoint-health\n"
         f"- $0.01 x402 Preflight: POST {PUBLIC_ORIGIN}/v1/tools/x402-preflight\n"
         f"- $0.01 Manifest Check: POST {PUBLIC_ORIGIN}/v1/tools/manifest-check\n"
+        f"- $0.02 Domain Security: POST {PUBLIC_ORIGIN}/v1/tools/domain-security\n"
+        f"- $0.01 Page Change: POST {PUBLIC_ORIGIN}/v1/tools/page-change\n"
+        f"- $0.01 Receipt Verify: POST {PUBLIC_ORIGIN}/v1/tools/receipt-verify\n"
+        f"- $29 Commerce Assurance Report: POST {PUBLIC_ORIGIN}/v1/reports/commerce-assurance\n"
         f"- x402 adoption kit: GET {PUBLIC_ORIGIN}/v1/x402-adoption-kit\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- True402 compatibility manifest: GET {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
@@ -1169,6 +1204,78 @@ def manifest_check(payload: UrlToolRequest):
     audit = _probe_sales_target(str(payload.url))
     missing = [item["name"] for item in audit["checks"] if not item["present"]]
     return {"protocol": "capi2.manifest_check/1.0", "origin": audit["origin"], "grade": "A" if audit["readiness_score"] >= 80 else "B" if audit["readiness_score"] >= 60 else "D", "readiness_score": audit["readiness_score"], "checks": audit["checks"], "missing": missing, "fixes": [f"Publish {name} at the conventional path" for name in missing]}
+
+
+def _domain_security_result(raw_url: str) -> dict:
+    url = raw_url if "://" in raw_url else f"https://{raw_url}"
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise HTTPException(status_code=422, detail="domain security requires a public HTTPS URL")
+    _validate_public_http_url(url)
+    hostname = parsed.hostname
+    port = parsed.port or 443
+    addresses = sorted({item[4][0] for item in socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)})
+    context = ssl.create_default_context()
+    with socket.create_connection((hostname, port), timeout=8) as raw_socket:
+        with context.wrap_socket(raw_socket, server_hostname=hostname) as tls_socket:
+            certificate = tls_socket.getpeercert()
+            cipher = tls_socket.cipher()
+            tls_version = tls_socket.version()
+    expires_at = certificate.get("notAfter")
+    days_remaining = None
+    if expires_at:
+        days_remaining = int((ssl.cert_time_to_seconds(expires_at) - time.time()) // 86400)
+    response = requests.get(url, timeout=10, allow_redirects=False, stream=True, headers={"user-agent": f"capi2-security/{SERVICE_VERSION}"})
+    security_headers = {
+        name: bool(response.headers.get(name))
+        for name in ["strict-transport-security", "content-security-policy", "x-content-type-options", "referrer-policy", "permissions-policy"]
+    }
+    status = response.status_code
+    response.close()
+    score = round((sum(security_headers.values()) / len(security_headers)) * 50 + (25 if days_remaining is not None and days_remaining > 14 else 0) + (25 if status < 500 else 0))
+    return {"protocol": "capi2.domain_security/1.0", "url": url, "hostname": hostname, "resolved_addresses": addresses, "http_status": status, "tls": {"version": tls_version, "cipher": cipher[0] if cipher else None, "expires_at": expires_at, "days_remaining": days_remaining}, "security_headers": security_headers, "score": score, "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+@app.post("/v1/tools/domain-security", tags=["evergreen tools", "paid"])
+def domain_security(payload: UrlToolRequest):
+    return _domain_security_result(str(payload.url))
+
+
+@app.post("/v1/tools/page-change", tags=["evergreen tools", "paid"])
+def page_change(payload: PageChangeRequest):
+    final_url, html = _fetch_public_source(str(payload.url))
+    normalized = _extract_page_text(html)[:payload.max_chars]
+    current_sha256 = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return {"protocol": "capi2.page_change/1.0", "source_url": str(payload.url), "final_url": final_url, "current_sha256": current_sha256, "previous_sha256": payload.previous_sha256, "changed": None if payload.previous_sha256 is None else current_sha256.lower() != payload.previous_sha256.lower(), "characters": len(normalized), "observation": "Store current_sha256 and submit it as previous_sha256 on the next check.", "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+@app.post("/v1/tools/receipt-verify", tags=["evergreen tools", "paid"])
+def receipt_verify(payload: ReceiptVerifyRequest):
+    receipt = payload.receipt
+    required = ["receipt_id", "request_id", "seller", "price", "asset", "network", "delivery_sha256", "settlement", "issued_at"]
+    missing = [field for field in required if receipt.get(field) in (None, "", {})]
+    warnings = []
+    delivery_hash = str(receipt.get("delivery_sha256", ""))
+    if delivery_hash and not re.fullmatch(r"[a-fA-F0-9]{64}", delivery_hash): warnings.append("delivery_sha256_invalid")
+    if receipt.get("price") is not None:
+        try:
+            if float(receipt["price"]) < 0: warnings.append("negative_price")
+        except (TypeError, ValueError): warnings.append("price_not_numeric")
+    settlement = receipt.get("settlement")
+    if isinstance(settlement, dict) and not any(settlement.get(key) for key in ["transaction", "transaction_hash", "evidence_url"]): warnings.append("settlement_evidence_missing")
+    valid = not missing and not warnings
+    return {"protocol": "capi2.receipt_verify/1.0", "valid": valid, "verification_scope": "structural consistency only; on-chain settlement is not independently fetched", "missing": missing, "warnings": warnings, "receipt_id": receipt.get("receipt_id"), "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+@app.post("/v1/reports/commerce-assurance", tags=["reports", "paid"])
+def commerce_assurance(payload: CommerceAssuranceRequest):
+    target = str(payload.target_url)
+    discovery = _probe_sales_target(target)
+    security = _domain_security_result(target)
+    combined_score = round((discovery["readiness_score"] + security["score"]) / 2)
+    missing = [item["name"] for item in discovery["checks"] if not item["present"]]
+    header_gaps = [name for name, present in security["security_headers"].items() if not present]
+    return {"protocol": "capi2.commerce_assurance/1.0", "report_id": f"car_{uuid.uuid4().hex[:16]}", "organization": payload.organization, "target_url": target, "combined_score": combined_score, "grade": "A" if combined_score >= 85 else "B" if combined_score >= 70 else "C" if combined_score >= 55 else "D", "discovery": discovery, "domain_security": security, "priority_actions": [*[f"Publish {name}" for name in missing], *[f"Add {name} header" for name in header_gaps]][:8], "limitations": ["Point-in-time external observation", "No penetration test", "No independent on-chain settlement verification"], "delivered_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
 
 def _public_json(url: str) -> dict:
