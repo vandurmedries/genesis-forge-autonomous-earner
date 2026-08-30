@@ -36,10 +36,14 @@ AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "tru
 MAX_FETCH_BYTES = int(os.getenv("CAPI2_INTELLIGENCE_MAX_FETCH_BYTES", "750000"))
 MAX_REDIRECTS = 3
 USER_AGENT = "capi2-agent-intelligence/2.0 (+x402; public-data-only)"
+SERVICE_VERSION = "2.1.0"
+
+_CONTEXT_CACHE: dict[str, dict[str, Any]] = {}
+_CONTEXT_CACHE_LOCK = threading.Lock()
 
 app = FastAPI(
     title="capi2 Agent Utilities",
-    version="2.0.0",
+    version=SERVICE_VERSION,
     description=(
         "Paid x402 utilities and live intelligence for autonomous agents: hashing/encoding plus "
         "public web lookup, domain intelligence, API discovery audit, evidence extraction and x402 health."
@@ -107,6 +111,17 @@ EVIDENCE_SCHEMA = {
     },
     "required": ["url", "query"],
 }
+CONTEXT_OPTIMIZER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "format": "uri", "description": "Public HTTP(S) live-data source."},
+        "query": {"type": ["string", "null"], "maxLength": 500, "description": "Optional terms used to retain only relevant passages."},
+        "previous_sha256": {"type": ["string", "null"], "description": "Digest from a prior response; unchanged content returns a compact delta."},
+        "cache_ttl_seconds": {"type": "integer", "minimum": 30, "maximum": 3600, "default": 300},
+        "max_output_chars": {"type": "integer", "minimum": 200, "maximum": 12000, "default": 3000},
+    },
+    "required": ["url"],
+}
 
 BUYER_QUERIES = [
     "live web or public API lookup",
@@ -118,6 +133,8 @@ BUYER_QUERIES = [
     "base64 encode or decode",
     "decode jwt claims",
     "canonicalize json",
+    "fetch and compress live data for a low-token agent context",
+    "return only changes since a previous live-data digest",
 ]
 
 
@@ -313,6 +330,18 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "output": {"canonical": "{\"a\":1,\"b\":2}", "sha256": "43258cff..."},
         "price": MICRO_PRICE,
     },
+    {
+        "path": "/v1/agent/context-optimizer",
+        "name": "capi2 Live Context Optimizer",
+        "summary": "Fetch live public data, reuse a short-lived cache and return a compact or delta response for lower-context agents.",
+        "description": "Live public-data fetch with bounded output, cache reuse, content digests and unchanged-response suppression to reduce repeated network and context usage.",
+        "tags": ["agent efficiency", "live data", "context compression", "cache", "delta response"],
+        "buyer_queries": ["reduce agent context usage", "cache live api data", "return only changed live data", "compact public web data for an ai agent"],
+        "example": {"url": "https://example.com", "query": "example domain", "cache_ttl_seconds": 300, "max_output_chars": 3000},
+        "schema": CONTEXT_OPTIMIZER_SCHEMA,
+        "output": {"changed": True, "cache_hit": False, "sha256": "abc...", "compact_text": "Example Domain", "estimated_context_tokens": 4},
+        "price": INTEL_PRICE,
+    },
 ]
 
 routes = {
@@ -361,6 +390,14 @@ class EvidenceExtractRequest(BaseModel):
     url: HttpUrl
     query: str = Field(min_length=2, max_length=1000)
     max_passages: int = Field(default=5, ge=1, le=10)
+
+
+class ContextOptimizerRequest(BaseModel):
+    url: HttpUrl
+    query: Optional[str] = Field(default=None, max_length=500)
+    previous_sha256: Optional[str] = Field(default=None, max_length=128)
+    cache_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    max_output_chars: int = Field(default=3000, ge=200, le=12000)
 
 
 def _price_usd(value: str) -> float:
@@ -771,7 +808,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "capi2-demand-tools",
-        "version": "2.0.0",
+        "version": SERVICE_VERSION,
         "network": NETWORK,
         "asset": "USDC",
         "micro_price": MICRO_PRICE,
@@ -852,7 +889,7 @@ def x402_manifest() -> dict[str, Any]:
 def agent_manifest() -> dict[str, Any]:
     return {
         "name": "capi2 Agent Utilities",
-        "protocol": "capi2.demand-tools/2.0.0",
+        "protocol": f"capi2.demand-tools/{SERVICE_VERSION}",
         "description": "Live public intelligence and deterministic micro-APIs priced for autonomous agent purchasing.",
         "buyer_queries": BUYER_QUERIES,
         "discovery": {
@@ -1129,6 +1166,116 @@ def json_canonicalize(payload: JsonCanonicalizeRequest) -> dict[str, Any]:
     return {"canonical": canonical, "sha256": digest}
 
 
+@app.post(
+    "/v1/agent/context-optimizer",
+    tags=["agent efficiency", "live data", "context compression", "cache"],
+    summary="Fetch and compact live data for low-context agents",
+    description=(
+        "Fetch a public source, reuse a bounded in-memory cache, suppress unchanged content and return "
+        "query-ranked compact text plus measured byte/token estimates. Lower resource use is possible but not guaranteed."
+    ),
+    openapi_extra=_openapi_extra(INTEL_PRICE, TOOL_SPECS[11]["buyer_queries"]),
+)
+def context_optimizer(payload: ContextOptimizerRequest) -> dict[str, Any]:
+    url = str(payload.url)
+    now = time.time()
+    with _CONTEXT_CACHE_LOCK:
+        cached = _CONTEXT_CACHE.get(url)
+        cache_hit = bool(cached and now - cached["stored_at"] <= payload.cache_ttl_seconds)
+
+    if cache_hit:
+        fetched = cached["fetched"]
+    else:
+        fetched = _safe_fetch(url, max_bytes=MAX_FETCH_BYTES)
+        with _CONTEXT_CACHE_LOCK:
+            _CONTEXT_CACHE[url] = {"stored_at": now, "fetched": fetched}
+
+    digest = hashlib.sha256(fetched["raw"]).hexdigest()
+    unchanged = bool(payload.previous_sha256 and payload.previous_sha256.lower() == digest)
+    body = fetched["text"]
+    if "html" in fetched["content_type"] or "<html" in body[:500].lower():
+        clean_text = _html_to_text(body)
+    elif fetched["content_type"] in {"application/json", "application/problem+json"} or body.lstrip().startswith(("{", "[")):
+        try:
+            clean_text = json.dumps(json.loads(body), ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            clean_text = body.strip()
+    else:
+        clean_text = body.strip()
+
+    passages = _passages(clean_text, payload.query, 5) if payload.query and not unchanged else []
+    if passages:
+        compact_text = "\n".join(item["text"] for item in passages)
+    else:
+        compact_text = clean_text
+    compact_text = "" if unchanged else compact_text[:payload.max_output_chars]
+    source_chars = len(clean_text)
+    output_chars = len(compact_text)
+    estimated_source_tokens = (source_chars + 3) // 4
+    estimated_context_tokens = (output_chars + 3) // 4
+    estimated_tokens_avoided = max(0, estimated_source_tokens - estimated_context_tokens)
+    context_reduction_percent = round(
+        100 * estimated_tokens_avoided / estimated_source_tokens, 1
+    ) if estimated_source_tokens else 0.0
+
+    return {
+        "checked_at": _utc_now(),
+        "source_url": fetched["final_url"],
+        "source_status": fetched["status"],
+        "content_type": fetched["content_type"],
+        "changed": not unchanged,
+        "cache_hit": cache_hit,
+        "cache_ttl_seconds": payload.cache_ttl_seconds,
+        "sha256": digest,
+        "compact_text": compact_text,
+        "passages": passages,
+        "usage": {
+            "source_bytes": len(fetched["raw"]),
+            "output_chars": output_chars,
+            "estimated_source_tokens": estimated_source_tokens,
+            "estimated_context_tokens": estimated_context_tokens,
+            "estimated_context_tokens_avoided": estimated_tokens_avoided,
+            "estimated_context_reduction_percent": context_reduction_percent,
+            "network_fetch_avoided": cache_hit,
+        },
+        "energy_model": {
+            "formula": "estimated_tokens_avoided / 1000 * measured_wh_per_1000_input_tokens",
+            "example_assumption_wh_per_1000_input_tokens": 0.25,
+            "example_estimated_wh_avoided": round(estimated_tokens_avoided / 1000 * 0.25, 6),
+            "guaranteed": False,
+            "why_not_guaranteed": "Actual energy depends on model, batching, hardware, datacenter, inference stack and whether the caller would otherwise resend the full source.",
+        },
+        "caveat": (
+            "Token counts use a simple four-characters-per-token estimate. Reduced network/context usage is measured; "
+            "energy savings depend on the caller, model, infrastructure and cache behavior and are not guaranteed."
+        ),
+    }
+
+
+@app.post("/v1/agent/context-optimizer/validate", tags=["agent efficiency", "discovery", "free"])
+def validate_context_optimizer(payload: ContextOptimizerRequest) -> dict[str, Any]:
+    return {
+        "valid": True,
+        "paid_endpoint": "/v1/agent/context-optimizer",
+        "price": INTEL_PRICE,
+        "asset": "USDC",
+        "network": NETWORK,
+        "cache_ttl_seconds": payload.cache_ttl_seconds,
+        "max_output_chars": payload.max_output_chars,
+        "worked_example": {
+            "source_chars": 50000,
+            "estimated_source_tokens": 12500,
+            "compact_output_chars": 1000,
+            "estimated_compact_tokens": 250,
+            "estimated_tokens_avoided": 12250,
+            "estimated_context_reduction_percent": 98.0,
+            "illustrative_energy_assumption_wh_per_1000_input_tokens": 0.25,
+            "illustrative_energy_avoided_wh": 3.0625,
+            "energy_saving_guaranteed": False,
+        },
+    }
+
+
 def register_agent402_later() -> None:
     if not AGENT402_REGISTER:
         return
@@ -1138,7 +1285,7 @@ def register_agent402_later() -> None:
             "https://agent402.tools/api/index/register",
             json={"origin": PUBLIC_ORIGIN},
             timeout=20,
-            headers={"user-agent": "capi2-agent-utilities/2.0.0"},
+            headers={"user-agent": f"capi2-agent-utilities/{SERVICE_VERSION}"},
         )
         body = response.json() if "application/json" in response.headers.get("content-type", "") else {"text": response.text[:500]}
         print(f"agent402 registration: status={response.status_code} listed={body.get('listed')} seller={body.get('seller')}")
