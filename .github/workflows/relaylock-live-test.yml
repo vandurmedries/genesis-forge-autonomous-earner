@@ -32,12 +32,14 @@ jobs:
         run: |
           set -euo pipefail
           base="https://capi2-relaylock.onrender.com"
-          curl --fail --silent --show-error "$base/" | grep -q "CAPI2 RelayLock"
-          curl --fail --silent --show-error "$base/docs" > /dev/null
+          curl --fail --silent --show-error "$base/" > landing.html
+          grep -q "CAPI2 RelayLock" landing.html
+          curl --fail --silent --show-error "$base/docs" > docs.html
           curl --fail --silent --show-error "$base/v1/pricing" > pricing.json
           curl --fail --silent --show-error "$base/.well-known/x402" > x402.json
           curl --fail --silent --show-error "$base/v1/quickstart" > quickstart.json
-          curl --fail --silent --show-error "$base/sdk/javascript" | grep -q "relayLock"
+          curl --fail --silent --show-error "$base/sdk/javascript" > sdk.js
+          grep -q "relayLock" sdk.js
           python - <<'PY'
           import json
           health = json.load(open("health.json"))
