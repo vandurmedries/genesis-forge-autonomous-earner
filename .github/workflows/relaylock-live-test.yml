@@ -1,0 +1,71 @@
+name: RelayLock live test
+
+on:
+  push:
+    branches:
+      - product/capi2-relaylock-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for the production deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://capi2-relaylock.onrender.com"
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent --show-error --max-time 20 "$base/health" > health.json; then
+              break
+            fi
+            sleep 10
+          done
+          test -s health.json
+
+      - name: Verify public product and machine routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://capi2-relaylock.onrender.com"
+          curl --fail --silent --show-error "$base/" | grep -q "CAPI2 RelayLock"
+          curl --fail --silent --show-error "$base/docs" > /dev/null
+          curl --fail --silent --show-error "$base/v1/pricing" > pricing.json
+          curl --fail --silent --show-error "$base/.well-known/x402" > x402.json
+          curl --fail --silent --show-error "$base/v1/quickstart" > quickstart.json
+          curl --fail --silent --show-error "$base/sdk/javascript" | grep -q "relayLock"
+          python - <<'PY'
+          import json
+          health = json.load(open("health.json"))
+          pricing = json.load(open("pricing.json"))
+          x402 = json.load(open("x402.json"))
+          quick = json.load(open("quickstart.json"))
+          assert health["ok"] is True
+          assert health["payment_enforced"] is True
+          assert health["service"] == "capi2-relaylock"
+          assert pricing["integration_pilot"]["price"] == "€39"
+          assert set(pricing["tiers"]) == {"standard", "assured", "critical"}
+          assert len(x402["resources"]) == 3
+          assert quick["protocol"] == "capi2.relaylock/1.0"
+          PY
+
+      - name: Verify security boundaries and payment barrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://capi2-relaylock.onrender.com"
+          private_status=$(curl --silent --output private.json --write-out '%{http_code}' \
+            -H 'content-type: application/json' \
+            -d '{"callback_url":"https://127.0.0.1/callback"}' \
+            "$base/v1/check-callback")
+          test "$private_status" = "422"
+
+          payment_status=$(curl --silent --output unpaid.json --write-out '%{http_code}' \
+            -H 'content-type: application/json' \
+            -d '{"integration_token":"not-a-valid-token-but-long-enough-00000000000000000000","event_id":"ci-test","event_type":"test","payload":{"ok":true}}' \
+            "$base/v1/relay/standard")
+          test "$payment_status" = "402"
