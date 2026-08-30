@@ -22,7 +22,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.11.0"
+SERVICE_VERSION = "1.12.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 COMMERCE_PROTOCOL = "capi2.verifiable_commerce/1.0"
 BRAND_PROMISE = "Verifiable commerce for autonomous agents."
@@ -34,6 +34,7 @@ PRICE = os.getenv("CAPI2_CLAIM_VERIFY_PRICE", "$0.01")
 ENDPOINT_CHECK_PRICE = os.getenv("CAPI2_ENDPOINT_CHECK_PRICE", "$49.00")
 LAUNCH_PACK_PRICE = os.getenv("CAPI2_LAUNCH_PACK_PRICE", "$149.00")
 INTEGRATION_PRICE = os.getenv("CAPI2_INTEGRATION_PRICE", "$199.00")
+UTILITY_PRICE = os.getenv("CAPI2_UTILITY_PRICE", "$0.01")
 PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-verify.onrender.com").rstrip("/")
 AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "true"
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
@@ -292,6 +293,14 @@ routes = {
         description="Implementation-ready verification and settlement integration blueprint.",
         service_name="CAPI2 Verification Integration", tags=["x402 integration", "settlement", "receipts"],
     ),
+    "POST /v1/tools/web-extract": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/web-extract", mime_type="application/json", description="Extract compact readable text and metadata from one public web page.", service_name="CAPI2 Web Extract", tags=["web scrape", "retrieval", "agent utility"]),
+    "POST /v1/tools/endpoint-health": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/endpoint-health", mime_type="application/json", description="Probe one public HTTPS endpoint and return latency, status and content metadata.", service_name="CAPI2 Endpoint Health", tags=["uptime", "endpoint reliability", "agent utility"]),
+    "POST /v1/tools/x402-preflight": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/x402-preflight", mime_type="application/json", description="Validate an x402 quote against bounded buyer policy before signing.", service_name="CAPI2 x402 Preflight", tags=["x402", "payment safety", "policy"]),
+    "POST /v1/tools/manifest-check": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", pay_to=PAY_TO, price=UTILITY_PRICE, network=NETWORK)], resource=f"{PUBLIC_ORIGIN}/v1/tools/manifest-check", mime_type="application/json", description="Check whether an origin publishes usable OpenAPI, x402, agent and llms discovery.", service_name="CAPI2 Manifest Check", tags=["discovery", "manifest", "MCP", "x402"]),
 }
 app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
@@ -377,6 +386,21 @@ class SalesProductRequest(BaseModel):
     organization: Optional[str] = Field(default=None, max_length=160)
     objective: Optional[str] = Field(default=None, max_length=800)
     contact_ref: Optional[str] = Field(default=None, max_length=200)
+
+
+class UrlToolRequest(BaseModel):
+    url: HttpUrl
+    max_chars: int = Field(default=12000, ge=500, le=20000)
+
+
+class X402PreflightRequest(BaseModel):
+    resource: HttpUrl
+    price_usd: float = Field(ge=0, le=100000)
+    network: str = Field(min_length=2, max_length=100)
+    asset: str = Field(min_length=2, max_length=100)
+    pay_to: str = Field(min_length=6, max_length=160)
+    max_price_usd: float = Field(default=1.0, ge=0, le=100000)
+    allowed_networks: List[str] = Field(default_factory=lambda: ["eip155:8453"], max_length=20)
 
 
 def _word_list(text: str) -> list[str]:
@@ -655,7 +679,11 @@ def _x402_manifest() -> dict:
             },
             {"name": "CAPI2 x402 Endpoint Check", "resource": f"{PUBLIC_ORIGIN}/v1/products/endpoint-check", "endpoint": "POST /v1/products/endpoint-check", "method": "POST", "price_usd": 49.0, "tags": ["x402 audit", "endpoint reliability", "agent commerce"], "summary": "Audit one public endpoint and return readiness evidence plus prioritized fixes.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}, "objective": {"type": "string"}}}},
             {"name": "CAPI2 Agent Commerce Launch Pack", "resource": f"{PUBLIC_ORIGIN}/v1/products/launch-pack", "endpoint": "POST /v1/products/launch-pack", "method": "POST", "price_usd": 149.0, "tags": ["x402 launch", "MCP", "agent sales"], "summary": "Receive positioning, offer ladder, launch checklist and discovery plan inline.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}, "objective": {"type": "string"}}}},
-            {"name": "CAPI2 Verification Integration", "resource": f"{PUBLIC_ORIGIN}/v1/products/verification-integration", "endpoint": "POST /v1/products/verification-integration", "method": "POST", "price_usd": 199.0, "tags": ["verification", "settlement", "commerce receipts"], "summary": "Receive an implementation-ready verification and settlement blueprint.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}, "objective": {"type": "string"}}}}
+            {"name": "CAPI2 Verification Integration", "resource": f"{PUBLIC_ORIGIN}/v1/products/verification-integration", "endpoint": "POST /v1/products/verification-integration", "method": "POST", "price_usd": 199.0, "tags": ["verification", "settlement", "commerce receipts"], "summary": "Receive an implementation-ready verification and settlement blueprint.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}, "objective": {"type": "string"}}}},
+            {"name": "CAPI2 Web Extract", "resource": f"{PUBLIC_ORIGIN}/v1/tools/web-extract", "endpoint": "POST /v1/tools/web-extract", "method": "POST", "price_usd": 0.01, "tags": ["web scrape", "retrieval", "agent utility"], "summary": "Extract compact readable text and metadata from one public web page.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}, "max_chars": {"type": "integer", "minimum": 500, "maximum": 20000, "default": 5000}}}},
+            {"name": "CAPI2 Endpoint Health", "resource": f"{PUBLIC_ORIGIN}/v1/tools/endpoint-health", "endpoint": "POST /v1/tools/endpoint-health", "method": "POST", "price_usd": 0.01, "tags": ["uptime", "latency", "endpoint reliability"], "summary": "Probe one public HTTPS endpoint and return status, latency and content metadata.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}}}},
+            {"name": "CAPI2 x402 Preflight", "resource": f"{PUBLIC_ORIGIN}/v1/tools/x402-preflight", "endpoint": "POST /v1/tools/x402-preflight", "method": "POST", "price_usd": 0.01, "tags": ["x402", "payment safety", "buyer policy"], "summary": "Validate an x402 quote against bounded buyer policy before signing.", "input_schema": {"type": "object", "required": ["resource", "price_usd", "network", "asset", "pay_to"], "properties": {"resource": {"type": "string", "format": "uri"}, "price_usd": {"type": "number"}, "network": {"type": "string"}, "asset": {"type": "string"}, "pay_to": {"type": "string"}, "max_price_usd": {"type": "number", "default": 1.0}}}},
+            {"name": "CAPI2 Manifest Check", "resource": f"{PUBLIC_ORIGIN}/v1/tools/manifest-check", "endpoint": "POST /v1/tools/manifest-check", "method": "POST", "price_usd": 0.01, "tags": ["x402 discovery", "OpenAPI", "agent manifest"], "summary": "Check whether an origin publishes usable OpenAPI, x402, agent and llms discovery.", "input_schema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "format": "uri"}}}}
         ],
         "free_endpoints": [
             "/", "/buy", "/health", "/robots.txt", "/llms.txt", "/.well-known/x402",
@@ -793,6 +821,8 @@ async def health():
         "pay_to": PAY_TO,
         "x402_manifest": "/.well-known/x402",
         "bazaar_discovery": True,
+        "paid_resources": 8,
+        "evergreen_tools": 4,
         "positioning": BRAND_PROMISE,
         "commerce_protocol": COMMERCE_PROTOCOL,
         "commerce_discovery": "/v1/verifiable-commerce",
@@ -837,6 +867,10 @@ async def llms():
         f"- $49 Endpoint Check: POST {PUBLIC_ORIGIN}/v1/products/endpoint-check\n"
         f"- $149 Launch Pack: POST {PUBLIC_ORIGIN}/v1/products/launch-pack\n"
         f"- $199 Verification Integration: POST {PUBLIC_ORIGIN}/v1/products/verification-integration\n"
+        f"- $0.01 Web Extract: POST {PUBLIC_ORIGIN}/v1/tools/web-extract\n"
+        f"- $0.01 Endpoint Health: POST {PUBLIC_ORIGIN}/v1/tools/endpoint-health\n"
+        f"- $0.01 x402 Preflight: POST {PUBLIC_ORIGIN}/v1/tools/x402-preflight\n"
+        f"- $0.01 Manifest Check: POST {PUBLIC_ORIGIN}/v1/tools/manifest-check\n"
         f"- x402 adoption kit: GET {PUBLIC_ORIGIN}/v1/x402-adoption-kit\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- True402 compatibility manifest: GET {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
@@ -1073,7 +1107,7 @@ def _deliver_sales_product(product_id: str, payload: SalesProductRequest) -> dic
 
 @app.get("/v1/sales", tags=["sales", "discovery"])
 async def sales_catalog():
-    return {"protocol": "capi2.sales_funnel/1.0", "promise": "From free proof to paid, inline agent-commerce delivery.", "steps": ["discover", "free_preflight", "select_fixed_product", "x402_pay", "inline_delivery", "receipt", "upsell"], "free_entry": {"method": "POST", "path": "/v1/sales/preflight"}, "products": SALES_PRODUCTS, "payment": {"protocol": "x402", "network": NETWORK, "asset": "USDC", "payTo": PAY_TO}}
+    return {"protocol": "capi2.sales_funnel/1.1", "promise": "From repeated $0.01 machine use to fixed-price implementation work.", "steps": ["discover", "use_evergreen_tool", "x402_pay", "inline_delivery", "repeat", "upsell"], "free_entry": {"method": "POST", "path": "/v1/sales/preflight"}, "evergreen_tools": [item for item in _x402_manifest()["resources"] if item["endpoint"].startswith("POST /v1/tools/")], "products": SALES_PRODUCTS, "payment": {"protocol": "x402", "network": NETWORK, "asset": "USDC", "payTo": PAY_TO}}
 
 
 @app.post("/v1/sales/preflight", tags=["sales", "free"])
@@ -1094,6 +1128,47 @@ def launch_pack(payload: SalesProductRequest): return _deliver_sales_product("la
 
 @app.post("/v1/products/verification-integration", tags=["sales", "paid"])
 def verification_integration(payload: SalesProductRequest): return _deliver_sales_product("verification_integration", payload)
+
+
+@app.post("/v1/tools/web-extract", tags=["evergreen tools", "paid"])
+def web_extract(payload: UrlToolRequest):
+    final_url, html = _fetch_public_source(str(payload.url))
+    soup = BeautifulSoup(html, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else None
+    text = _extract_page_text(html)[:payload.max_chars]
+    return {"protocol": "capi2.web_extract/1.0", "source_url": str(payload.url), "final_url": final_url, "title": title, "text": text, "characters": len(text), "truncated": len(_extract_page_text(html)) > payload.max_chars, "fetched_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+@app.post("/v1/tools/endpoint-health", tags=["evergreen tools", "paid"])
+def endpoint_health(payload: UrlToolRequest):
+    url = str(payload.url); _validate_public_http_url(url); started = time.perf_counter()
+    try:
+        response = requests.get(url, timeout=10, allow_redirects=False, stream=True, headers={"user-agent": f"capi2-health/{SERVICE_VERSION}"})
+        elapsed = round((time.perf_counter() - started) * 1000)
+        result = {"protocol": "capi2.endpoint_health/1.0", "url": url, "reachable": True, "status": response.status_code, "latency_ms": elapsed, "content_type": response.headers.get("content-type"), "content_length": response.headers.get("content-length"), "redirect": response.headers.get("location"), "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+        response.close()
+        return result
+    except requests.RequestException as exc:
+        return {"protocol": "capi2.endpoint_health/1.0", "url": url, "reachable": False, "error": exc.__class__.__name__, "latency_ms": round((time.perf_counter() - started) * 1000), "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+@app.post("/v1/tools/x402-preflight", tags=["evergreen tools", "paid"])
+def x402_preflight(payload: X402PreflightRequest):
+    reasons = []
+    if payload.price_usd > payload.max_price_usd: reasons.append("price_exceeds_policy")
+    if payload.network not in payload.allowed_networks: reasons.append("network_not_allowed")
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", payload.pay_to): reasons.append("invalid_evm_recipient")
+    if payload.asset.upper() not in {"USDC", "USDT", "USDG"}: reasons.append("asset_not_stablecoin_allowlist")
+    return {"protocol": "capi2.x402_preflight/1.0", "decision": "allow" if not reasons else "deny", "reasons": reasons,
+            "quote": {"resource": str(payload.resource), "price_usd": payload.price_usd, "network": payload.network, "asset": payload.asset, "pay_to": payload.pay_to},
+            "policy": {"max_price_usd": payload.max_price_usd, "allowed_networks": payload.allowed_networks}, "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+@app.post("/v1/tools/manifest-check", tags=["evergreen tools", "paid"])
+def manifest_check(payload: UrlToolRequest):
+    audit = _probe_sales_target(str(payload.url))
+    missing = [item["name"] for item in audit["checks"] if not item["present"]]
+    return {"protocol": "capi2.manifest_check/1.0", "origin": audit["origin"], "grade": "A" if audit["readiness_score"] >= 80 else "B" if audit["readiness_score"] >= 60 else "D", "readiness_score": audit["readiness_score"], "checks": audit["checks"], "missing": missing, "fixes": [f"Publish {name} at the conventional path" for name in missing]}
 
 
 def _public_json(url: str) -> dict:
