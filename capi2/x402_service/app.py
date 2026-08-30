@@ -24,7 +24,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.15.1"
+SERVICE_VERSION = "1.16.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 COMMERCE_PROTOCOL = "capi2.verifiable_commerce/1.0"
 BRAND_PROMISE = "Verifiable commerce for autonomous agents."
