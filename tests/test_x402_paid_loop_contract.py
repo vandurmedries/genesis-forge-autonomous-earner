@@ -156,6 +156,15 @@ class PaidLoopContractTests(unittest.TestCase):
         self.assertEqual(landing.status_code, 200)
         self.assertIn("Verifiable commerce for autonomous agents", landing.text)
 
+    def test_free_market_radar_aggregates_without_payment(self):
+        response = self.client.get("/v1/free-x402-market-radar?q=agent%20verification&limit=2")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["billable"])
+        self.assertFalse(body["external_payments_made"])
+        self.assertLessEqual(len(body["offers"]), 4)
+        self.assertEqual(body["capi2_positioning"]["price_usd"], 0.01)
+
     def test_ai_vendor_ddq_pack_validates_and_challenges_for_twenty_five_cents(self):
         pack = {"claims": [self.request_body, self.request_body, self.request_body]}
 

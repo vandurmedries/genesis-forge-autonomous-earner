@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
@@ -22,7 +22,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.9.0"
+SERVICE_VERSION = "1.10.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 COMMERCE_PROTOCOL = "capi2.verifiable_commerce/1.0"
 BRAND_PROMISE = "Verifiable commerce for autonomous agents."
@@ -36,6 +36,9 @@ AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "tru
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
 MAX_REDIRECTS = 3
 MAX_SOURCES = 3
+MARKET_RADAR_CACHE_TTL = 300
+_MARKET_RADAR_CACHE: dict[str, tuple[float, dict]] = {}
+_MARKET_RADAR_LOCK = threading.Lock()
 
 BUYER_TAGS = [
     "verifiable agent commerce", "agent preflight", "delivery verification",
@@ -702,6 +705,7 @@ async def root():
             "dry_run": f"{PUBLIC_ORIGIN}/v1/claim-verify/dry-run",
             "x402_adoption_kit": f"{PUBLIC_ORIGIN}/v1/x402-adoption-kit",
             "verifiable_commerce": f"{PUBLIC_ORIGIN}/v1/verifiable-commerce",
+            "free_x402_market_radar": f"{PUBLIC_ORIGIN}/v1/free-x402-market-radar",
         },
         "buy": {"method": "POST", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
     }
@@ -793,6 +797,7 @@ async def llms():
         f"- Free verdict dry-run: POST {PUBLIC_ORIGIN}/v1/claim-verify/dry-run\n"
         f"- Quote: GET {PUBLIC_ORIGIN}/v1/quote\n"
         f"- Verifiable commerce products: GET {PUBLIC_ORIGIN}/v1/verifiable-commerce\n"
+        f"- Free x402 market radar: GET {PUBLIC_ORIGIN}/v1/free-x402-market-radar?q=agent%20verification\n"
         f"- x402 adoption kit: GET {PUBLIC_ORIGIN}/v1/x402-adoption-kit\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- True402 compatibility manifest: GET {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
@@ -984,6 +989,139 @@ async def verifiable_commerce():
             "Receipts must be portable across wallets, agent frameworks and payment rails.",
         ],
     }
+
+
+def _public_json(url: str) -> dict:
+    response = requests.get(
+        url,
+        timeout=12,
+        headers={"accept": "application/json", "user-agent": f"capi2-market-radar/{SERVICE_VERSION}"},
+    )
+    response.raise_for_status()
+    body = response.json()
+    if not isinstance(body, dict):
+        raise ValueError("expected_object_response")
+    return body
+
+
+def _numeric_price(value) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = re.search(r"([0-9]+(?:\.[0-9]+)?)", value)
+        return float(match.group(1)) if match else None
+    if isinstance(value, dict):
+        for key in ("fixed", "min", "minimum"):
+            if key in value:
+                return _numeric_price(value[key])
+    return None
+
+
+@app.get("/v1/free-x402-market-radar", tags=["discovery", "market intelligence", "free"])
+async def free_x402_market_radar(
+    q: str = Query(default="agent verification", min_length=2, max_length=120),
+    limit: int = Query(default=5, ge=1, le=10),
+):
+    """Aggregate free public x402 discovery into compact commercial intelligence."""
+    cache_key = f"{q.lower().strip()}:{limit}"
+    with _MARKET_RADAR_LOCK:
+        cached = _MARKET_RADAR_CACHE.get(cache_key)
+        if cached and time.time() - cached[0] < MARKET_RADAR_CACHE_TTL:
+            return {**cached[1], "cache": "hit"}
+
+    sources = []
+    offers = []
+    encoded_q = requests.utils.quote(q)
+    try:
+        agent402 = _public_json(f"https://agent402.tools/api/find?q={encoded_q}")
+        sources.append({"name": "Agent402", "status": "ok", "free_discovery": True})
+        for item in agent402.get("results", [])[:limit]:
+            offers.append({
+                "source": "Agent402",
+                "id": item.get("slug"),
+                "name": item.get("name"),
+                "description": item.get("description"),
+                "category": item.get("category"),
+                "route": item.get("route"),
+                "price_usd": _numeric_price(item.get("priceUsd", item.get("price"))),
+                "relevance_score": item.get("score"),
+                "provider_reputation": None,
+                "completed_jobs": None,
+            })
+    except Exception as exc:
+        sources.append({"name": "Agent402", "status": "unavailable", "reason": exc.__class__.__name__})
+
+    try:
+        the402 = _public_json(f"https://api.the402.ai/v1/services/catalog?q={encoded_q}&limit={limit}")
+        sources.append({"name": "the402", "status": "ok", "free_discovery": True, "total_matches": the402.get("total")})
+        for item in the402.get("services", [])[:limit]:
+            offers.append({
+                "source": "the402",
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "description": item.get("description"),
+                "category": item.get("category"),
+                "route": item.get("endpoint"),
+                "price_usd": _numeric_price(item.get("agent_price") or item.get("price")),
+                "relevance_score": None,
+                "provider_reputation": item.get("provider_reputation"),
+                "completed_jobs": item.get("provider_completed_jobs"),
+                "webhook_healthy": item.get("webhook_healthy"),
+            })
+    except Exception as exc:
+        sources.append({"name": "the402", "status": "unavailable", "reason": exc.__class__.__name__})
+
+    try:
+        supported = _public_json(f"{FACILITATOR_URL.rstrip('/')}/supported")
+        sources.append({"name": "x402 facilitator", "status": "ok", "free_discovery": True})
+        supported_networks = sorted({kind.get("network") for kind in supported.get("kinds", []) if kind.get("network")})
+    except Exception as exc:
+        sources.append({"name": "x402 facilitator", "status": "unavailable", "reason": exc.__class__.__name__})
+        supported_networks = []
+
+    priced = sorted(item["price_usd"] for item in offers if item.get("price_usd") is not None and item["price_usd"] > 0)
+    market_floor = priced[0] if priced else None
+    capi2_price = _price_usd()
+    lower_than_floor_pct = (
+        round((1 - capi2_price / market_floor) * 100, 1)
+        if market_floor and capi2_price < market_floor else None
+    )
+    response = {
+        "protocol": "capi2.free_x402_market_radar/1.0",
+        "query": q,
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "billable": False,
+        "external_payments_made": False,
+        "sources": sources,
+        "supported_networks": supported_networks,
+        "offers": offers,
+        "market": {"matched_offers": len(offers), "lowest_observed_positive_price_usd": market_floor},
+        "capi2_positioning": {
+            "product": "Evidence-backed verification for autonomous purchases",
+            "price_usd": capi2_price,
+            "lower_than_observed_floor_pct": lower_than_floor_pct,
+            "differentiators": [
+                "inline structured verdict from buyer-supplied evidence",
+                "free preflight before payment",
+                "portable verifiable-commerce contract",
+                "no account or API key required for the paid route",
+            ],
+        },
+        "recommended_sales_actions": [
+            "Target active agent-payment and escrow products that lack independent delivery evidence.",
+            "Lead with interoperability and machine-readable receipts, not generic x402 promotion.",
+            "Use observed price and reputation data as context; never claim competitor quality without evidence.",
+        ],
+        "limitations": [
+            "Discovery results are third-party public metadata and may be incomplete or stale.",
+            "Listed prices and reputation fields are not independently verified by CAPI2.",
+            "No paid endpoint was called and no settlement was created.",
+        ],
+        "cache": "miss",
+    }
+    with _MARKET_RADAR_LOCK:
+        _MARKET_RADAR_CACHE[cache_key] = (time.time(), response)
+    return response
 
 
 @app.get("/x402-agents.png", include_in_schema=False)
