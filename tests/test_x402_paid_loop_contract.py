@@ -130,6 +130,11 @@ class PaidLoopContractTests(unittest.TestCase):
         self.assertIn("free_dry_run", body["try_it"])
         self.assertGreaterEqual(len(body["safety"]), 5)
         self.assertIn("wallet-capable", body["integration_note"])
+        self.assertTrue(body["campaign_visual"].endswith("/x402-agents.png"))
+
+        visual = self.client.get("/x402-agents.png")
+        self.assertEqual(visual.status_code, 200)
+        self.assertEqual(visual.headers["content-type"], "image/png")
 
     def test_ai_vendor_ddq_pack_validates_and_challenges_for_twenty_five_cents(self):
         pack = {"claims": [self.request_body, self.request_body, self.request_body]}

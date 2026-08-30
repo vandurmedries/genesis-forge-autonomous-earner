@@ -6,13 +6,14 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
@@ -21,7 +22,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.8.0"
+SERVICE_VERSION = "1.8.1"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
@@ -836,6 +837,7 @@ async def x402_adoption_kit():
     """Machine-readable campaign and integration starter for agent builders."""
     return {
         "campaign": "Pay the API, not the signup form",
+        "campaign_visual": f"{PUBLIC_ORIGIN}/x402-agents.png",
         "goal": "Help agents and applications discover, evaluate and pay HTTP resources without accounts or API keys.",
         "standard": {
             "name": "x402",
@@ -888,6 +890,15 @@ async def x402_adoption_kit():
             "an OpenAPI description alone does not grant a model payment authority."
         ),
     }
+
+
+@app.get("/x402-agents.png", include_in_schema=False)
+async def x402_agents_campaign_visual():
+    return FileResponse(
+        Path(__file__).with_name("static") / "x402-agents-campaign.png",
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/v1/samples/hiddenlayer")
