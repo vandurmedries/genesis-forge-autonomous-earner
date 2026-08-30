@@ -21,7 +21,7 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.7.0"
+SERVICE_VERSION = "1.8.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
@@ -692,6 +692,7 @@ async def root():
             "llms": f"{PUBLIC_ORIGIN}/llms.txt",
             "quote": f"{PUBLIC_ORIGIN}/v1/quote",
             "dry_run": f"{PUBLIC_ORIGIN}/v1/claim-verify/dry-run",
+            "x402_adoption_kit": f"{PUBLIC_ORIGIN}/v1/x402-adoption-kit",
         },
         "buy": {"method": "POST", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
     }
@@ -763,6 +764,7 @@ async def llms():
         f"- Paid endpoint: POST {PUBLIC_ORIGIN}/v1/claim-verify\n"
         f"- Free verdict dry-run: POST {PUBLIC_ORIGIN}/v1/claim-verify/dry-run\n"
         f"- Quote: GET {PUBLIC_ORIGIN}/v1/quote\n"
+        f"- x402 adoption kit: GET {PUBLIC_ORIGIN}/v1/x402-adoption-kit\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- True402 compatibility manifest: GET {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
         f"- Agent manifest: GET {PUBLIC_ORIGIN}/.well-known/agent.json\n"
@@ -826,6 +828,65 @@ async def examples():
             "request": {"fixture_id": "supporting_evidence_with_unrelated_negation"},
             "expected_verification_status": "supported",
         },
+    }
+
+
+@app.get("/v1/x402-adoption-kit", tags=["discovery", "x402", "free"])
+async def x402_adoption_kit():
+    """Machine-readable campaign and integration starter for agent builders."""
+    return {
+        "campaign": "Pay the API, not the signup form",
+        "goal": "Help agents and applications discover, evaluate and pay HTTP resources without accounts or API keys.",
+        "standard": {
+            "name": "x402",
+            "specification": "https://github.com/x402-foundation/x402",
+            "flow": [
+                "request resource",
+                "receive HTTP 402 plus PAYMENT-REQUIRED",
+                "review price, network, asset, recipient and resource",
+                "sign payment with a wallet-capable client",
+                "retry with PAYMENT-SIGNATURE",
+                "receive result plus PAYMENT-RESPONSE",
+            ],
+        },
+        "safety": [
+            "Set a maximum spend per call and per day.",
+            "Verify the resource URL, network, asset and payTo address before signing.",
+            "Use a free validation or dry-run endpoint when available.",
+            "Treat settlement as proof of payment, not proof of output quality.",
+            "Keep a human approval step for high-impact or regulated actions.",
+        ],
+        "try_it": {
+            "seller": PUBLIC_ORIGIN,
+            "free_dry_run": {
+                "method": "POST",
+                "url": f"{PUBLIC_ORIGIN}/v1/claim-verify/dry-run",
+                "body": {"fixture_id": "supporting_evidence_with_unrelated_negation"},
+            },
+            "paid_resource": {
+                "method": "POST",
+                "url": f"{PUBLIC_ORIGIN}/v1/claim-verify",
+                "price": PRICE,
+                "asset": "USDC",
+                "network": NETWORK,
+            },
+            "discovery": f"{PUBLIC_ORIGIN}/.well-known/x402",
+            "openapi": f"{PUBLIC_ORIGIN}/openapi.json",
+        },
+        "agent_prompt": (
+            "When a useful API returns HTTP 402, inspect its payment requirements. "
+            "Only continue if the resource, price, network, asset and recipient match policy; "
+            "otherwise explain why payment was declined. Never claim that payment proves output quality."
+        ),
+        "share_messages": [
+            "Agents should be able to pay useful APIs without creating accounts. That is the x402 idea: discover, inspect, pay, receive.",
+            "HTTP 402 becomes useful when buyers can verify price and recipient before signing—and evaluate quality after delivery.",
+            "Building an agent tool? Publish OpenAPI plus /.well-known/x402, provide a free validation path, and make the paid result auditable.",
+        ],
+        "integration_note": (
+            "Chat assistants require a wallet-capable tool or middleware to sign x402 payments; "
+            "an OpenAPI description alone does not grant a model payment authority."
+        ),
     }
 
 

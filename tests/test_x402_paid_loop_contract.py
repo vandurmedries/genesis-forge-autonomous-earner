@@ -122,6 +122,15 @@ class PaidLoopContractTests(unittest.TestCase):
         self.assertEqual(challenge["accepts"][0]["network"], "eip155:8453")
         self.assertEqual(challenge["accepts"][0]["amount"], "40000")
 
+    def test_x402_adoption_kit_is_free_and_machine_readable(self):
+        response = self.client.get("/v1/x402-adoption-kit")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["standard"]["name"], "x402")
+        self.assertIn("free_dry_run", body["try_it"])
+        self.assertGreaterEqual(len(body["safety"]), 5)
+        self.assertIn("wallet-capable", body["integration_note"])
+
     def test_ai_vendor_ddq_pack_validates_and_challenges_for_twenty_five_cents(self):
         pack = {"claims": [self.request_body, self.request_body, self.request_body]}
 
