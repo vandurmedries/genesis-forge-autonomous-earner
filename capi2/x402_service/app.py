@@ -1621,3 +1621,13 @@ def register_agent402_later() -> None:
 @app.on_event("startup")
 def startup() -> None:
     threading.Thread(target=register_agent402_later, daemon=True).start()
+
+
+# Keep the human-facing chatgpt.site controlroom private while exposing a
+# separately authenticated endpoint that scheduled workers can call.
+try:
+    from .revenue_worker import install as _install_revenue_worker
+except ImportError:
+    from revenue_worker import install as _install_revenue_worker
+
+_install_revenue_worker(app)

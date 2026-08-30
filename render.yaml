@@ -21,3 +21,5 @@ services:
         value: "$0.04"
       - key: CAPI2_AI_VENDOR_DDQ_PRICE
         value: "$0.25"
+      - key: CAPI2_REVENUE_WORKER_TOKEN
+        sync: false
