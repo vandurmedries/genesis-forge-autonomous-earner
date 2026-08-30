@@ -652,13 +652,16 @@ def _x402_manifest() -> dict:
                 },
                 "output_example": CLAIM_OUTPUT_EXAMPLE,
                 "discovery_extension": "bazaar",
-            }
+            },
+            {"name": "CAPI2 x402 Endpoint Check", "resource": f"{PUBLIC_ORIGIN}/v1/products/endpoint-check", "endpoint": "POST /v1/products/endpoint-check", "method": "POST", "price_usd": 49.0, "tags": ["x402 audit", "endpoint reliability", "agent commerce"], "summary": "Audit one public endpoint and return readiness evidence plus prioritized fixes.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}, "objective": {"type": "string"}}}},
+            {"name": "CAPI2 Agent Commerce Launch Pack", "resource": f"{PUBLIC_ORIGIN}/v1/products/launch-pack", "endpoint": "POST /v1/products/launch-pack", "method": "POST", "price_usd": 149.0, "tags": ["x402 launch", "MCP", "agent sales"], "summary": "Receive positioning, offer ladder, launch checklist and discovery plan inline.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}, "objective": {"type": "string"}}}},
+            {"name": "CAPI2 Verification Integration", "resource": f"{PUBLIC_ORIGIN}/v1/products/verification-integration", "endpoint": "POST /v1/products/verification-integration", "method": "POST", "price_usd": 199.0, "tags": ["verification", "settlement", "commerce receipts"], "summary": "Receive an implementation-ready verification and settlement blueprint.", "input_schema": {"type": "object", "required": ["target_url"], "properties": {"target_url": {"type": "string", "format": "uri"}, "organization": {"type": "string"}, "objective": {"type": "string"}}}}
         ],
         "free_endpoints": [
             "/", "/buy", "/health", "/robots.txt", "/llms.txt", "/.well-known/x402",
             "/.well-known/x402-service.json",
             "/.well-known/agent.json", "/openapi.json", "/v1/quote", "/v1/examples",
-            "/v1/claim-verify/schema", "/v1/claim-verify/dry-run",
+            "/v1/claim-verify/schema", "/v1/claim-verify/dry-run", "/v1/sales", "/v1/sales/preflight",
         ],
     }
 
@@ -682,6 +685,7 @@ def _manifest() -> dict:
             "openapi": "/openapi.json", "llms": "/llms.txt", "robots": "/robots.txt",
             "quote": "/v1/quote", "examples": "/v1/examples",
             "dry_run": "/v1/claim-verify/dry-run", "bazaar_extension": True,
+            "sales": "/v1/sales", "sales_preflight": "/v1/sales/preflight",
         },
         "quote": {"method": "GET", "path": "/v1/quote"},
         "endpoint": {"method": "POST", "path": "/v1/claim-verify", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
