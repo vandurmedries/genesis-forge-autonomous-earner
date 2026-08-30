@@ -1,0 +1,91 @@
+name: AckMint production smoke
+
+on:
+  push:
+    branches:
+      - test/ackmint-production-smoke
+    paths:
+      - .github/workflows/ackmint-production-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify public metadata and unpaid x402 challenge
+        shell: bash
+        run: |
+          set -euo pipefail
+          origin="https://capi2-agent-marketplace-router.onrender.com"
+
+          retry_get() {
+            local path="$1"
+            for attempt in 1 2 3 4 5; do
+              if curl --fail --silent --show-error --max-time 30 \
+                "$origin$path" -o response.json; then
+                return 0
+              fi
+              sleep $((attempt * 2))
+            done
+            return 1
+          }
+
+          retry_get "/v1/ackmint/health"
+          jq -e '.ok == true and .payment_enforced == true and .persistent_storage_configured == true and .network == "eip155:8453"' response.json
+
+          retry_get "/v1/ackmint/pricing"
+          jq -e '.billing == "per_successful_delivery" and .tiers.standard.price == "$0.02" and .tiers.assured.price == "$0.08" and .tiers.critical.price == "$0.25"' response.json
+
+          retry_get "/.well-known/x402"
+          jq -e '.protocol == "x402" and (.resources | length) == 3 and .network == "eip155:8453"' response.json
+
+          status="$(curl --silent --show-error --max-time 30 \
+            --dump-header headers.txt --output challenge.json \
+            --write-out '%{http_code}' \
+            --request POST "$origin/v1/ackmint/relay/standard" \
+            --header 'content-type: application/json' \
+            --data '{"integration_token":"invalid-token-for-unpaid-production-smoke-abcdefghijklmnopqrstuvwxyz0123456789","event_id":"ackmint_ci_probe","event_type":"ci.probe","payload":{"probe":true}}')"
+
+          test "$status" = "402"
+          grep -qi '^payment-required:' headers.txt
+
+          python - <<'PY'
+          import base64
+          import json
+
+          header = None
+          with open("headers.txt", encoding="utf-8") as handle:
+              for line in handle:
+                  if line.lower().startswith("payment-required:"):
+                      header = line.split(":", 1)[1].strip()
+                      break
+          assert header, "payment-required header missing"
+          raw = base64.urlsafe_b64decode(header + "=" * (-len(header) % 4))
+          envelope = json.loads(raw)
+          assert envelope.get("x402Version") == 2, envelope
+          accepts = envelope.get("accepts")
+          assert isinstance(accepts, list) and accepts, envelope
+          option = accepts[0]
+          assert option.get("network") == "eip155:8453", option
+          assert option.get("payTo") == "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a", option
+          assert option.get("scheme") == "exact", option
+          print(json.dumps({
+              "status": 402,
+              "x402Version": envelope["x402Version"],
+              "network": option["network"],
+              "payTo": option["payTo"],
+              "amount": option.get("amount"),
+          }, indent=2))
+          PY
+
+          {
+            echo '## AckMint production smoke'
+            echo '- Health: 200, payment enforcement enabled, PostgreSQL configured'
+            echo '- Pricing: 200, all three tiers present'
+            echo '- Discovery: 200, three Base-mainnet x402 resources'
+            echo '- Unpaid paid-route call: 402 with a decodable x402 v2 Payment-Required header'
+            echo '- No payment was made by this test'
+          } >> "$GITHUB_STEP_SUMMARY"
