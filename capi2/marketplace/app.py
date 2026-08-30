@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 import psycopg
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
 
 app = FastAPI(
@@ -23,6 +24,7 @@ app = FastAPI(
 STANDARD_FEE_BPS = 1000
 PROVIDER_SHARE_BPS = 9000
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+REVENUE_WORKER_TOKEN = os.getenv("CAPI2_REVENUE_WORKER_TOKEN", "").strip()
 
 ALLOWED_FINANCIAL_CLASSES = {
     "payments_fx_comparison",
@@ -202,7 +204,31 @@ def _init_db() -> None:
                 )
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS capi2_revenue_runs (
+                    run_id BIGSERIAL PRIMARY KEY,
+                    started_at TIMESTAMPTZ NOT NULL,
+                    completed_at TIMESTAMPTZ NOT NULL,
+                    production TEXT NOT NULL,
+                    discovery_resources INTEGER NOT NULL DEFAULT 0,
+                    market_signals INTEGER NOT NULL DEFAULT 0,
+                    verified_buyer_leads INTEGER NOT NULL DEFAULT 0,
+                    actions_auto_approved INTEGER NOT NULL DEFAULT 0,
+                    organic_revenue_cents BIGINT NOT NULL DEFAULT 0,
+                    payload JSONB NOT NULL
+                )
+                """
+            )
         conn.commit()
+
+
+def _authorize_revenue_worker(authorization: str | None) -> None:
+    if not REVENUE_WORKER_TOKEN:
+        raise HTTPException(status_code=503, detail="revenue_worker_not_configured")
+    supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    if not secrets.compare_digest(supplied, REVENUE_WORKER_TOKEN):
+        raise HTTPException(status_code=401, detail="invalid_worker_token")
 
 
 @app.on_event("startup")
@@ -214,6 +240,56 @@ def startup() -> None:
             "provider registry init deferred: "
             f"{exc.__class__.__name__}: {exc}"
         )
+
+
+@app.post("/v1/internal/revenue-runs", include_in_schema=False)
+def create_revenue_run(payload: dict[str, Any], authorization: str | None = Header(default=None)):
+    _authorize_revenue_worker(authorization)
+    if any(not payload.get(key) for key in ("startedAt", "completedAt", "production")):
+        raise HTTPException(status_code=422, detail="invalid_revenue_run")
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO capi2_revenue_runs (
+                    started_at, completed_at, production, discovery_resources,
+                    market_signals, verified_buyer_leads, actions_auto_approved,
+                    organic_revenue_cents, payload
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING run_id
+                """,
+                (
+                    payload["startedAt"], payload["completedAt"], payload["production"],
+                    int(payload.get("discoveryResources", 0)), int(payload.get("marketSignals", 0)),
+                    int(payload.get("verifiedBuyerLeads", 0)), int(payload.get("actionsAutoApproved", 0)),
+                    int(payload.get("organicRevenueCents", 0)), json.dumps(payload),
+                ),
+            )
+            run_id = cur.fetchone()[0]
+        conn.commit()
+    return {"ok": True, "runId": run_id}
+
+
+@app.get("/v1/revenue-runs/latest", include_in_schema=False)
+def latest_revenue_run():
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT run_id, started_at, completed_at, production,
+                       discovery_resources, market_signals, verified_buyer_leads,
+                       actions_auto_approved, organic_revenue_cents
+                FROM capi2_revenue_runs ORDER BY run_id DESC LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+    if not row:
+        return {"lastRun": None}
+    return {"lastRun": {
+        "runId": row[0], "startedAt": row[1], "completedAt": row[2], "production": row[3],
+        "discoveryResources": row[4], "marketSignals": row[5], "verifiedBuyerLeads": row[6],
+        "actionsAutoApproved": row[7], "organicRevenueCents": row[8], "ok": True,
+    }}
 
 
 def _tokens(text: str) -> set[str]:

@@ -23,3 +23,5 @@ services:
         value: "$0.25"
       - key: CAPI2_REVENUE_WORKER_TOKEN
         sync: false
+      - key: CAPI2_REVENUE_REGISTRY_ORIGIN
+        value: https://capi2-agent-marketplace-router.onrender.com

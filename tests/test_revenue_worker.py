@@ -14,7 +14,6 @@ class RevenueWorkerTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         os.environ["CAPI2_REVENUE_WORKER_TOKEN"] = "test-secret"
-        os.environ["CAPI2_REVENUE_STATE_PATH"] = str(Path(self.tempdir.name) / "state.json")
         module_path = Path(__file__).parents[1] / "capi2" / "x402_service" / "revenue_worker.py"
         spec = importlib.util.spec_from_file_location("capi2_revenue_worker_test", module_path)
         self.module = importlib.util.module_from_spec(spec)
@@ -27,7 +26,6 @@ class RevenueWorkerTests(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
         os.environ.pop("CAPI2_REVENUE_WORKER_TOKEN", None)
-        os.environ.pop("CAPI2_REVENUE_STATE_PATH", None)
 
     def test_requires_bearer_token(self):
         self.assertEqual(self.client.post("/v1/internal/revenue-cycle").status_code, 401)
@@ -38,7 +36,7 @@ class RevenueWorkerTests(unittest.TestCase):
             {"resources": [{}, {}]},
             {"offers": [{}, {}, {}]},
         ]
-        with patch.object(self.module, "_get_json", side_effect=payloads):
+        with patch.object(self.module, "_get_json", side_effect=payloads), patch.object(self.module, "_persist_run", return_value=41):
             response = self.client.post(
                 "/v1/internal/revenue-cycle",
                 headers={"authorization": "Bearer test-secret"},
@@ -49,9 +47,10 @@ class RevenueWorkerTests(unittest.TestCase):
         self.assertEqual(body["marketSignals"], 3)
         self.assertEqual(body["verifiedBuyerLeads"], 0)
         self.assertEqual(body["organicRevenueCents"], 0)
-        status = self.client.get("/v1/revenue-worker/status").json()
+        with patch.object(self.module, "_latest_run", return_value={"runId": 41, "ok": True}):
+            status = self.client.get("/v1/revenue-worker/status").json()
         self.assertTrue(status["configured"])
-        self.assertEqual(status["lastRun"]["runId"], 1)
+        self.assertEqual(status["lastRun"]["runId"], 41)
 
 
 if __name__ == "__main__":
