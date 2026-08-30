@@ -22,8 +22,10 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
-SERVICE_VERSION = "1.8.1"
+SERVICE_VERSION = "1.9.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
+COMMERCE_PROTOCOL = "capi2.verifiable_commerce/1.0"
+BRAND_PROMISE = "Verifiable commerce for autonomous agents."
 
 PAY_TO = os.getenv("CAPI2_PAY_TO", "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a")
 NETWORK = os.getenv("CAPI2_X402_NETWORK", "eip155:8453")
@@ -35,7 +37,10 @@ MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
 MAX_REDIRECTS = 3
 MAX_SOURCES = 3
 
-BUYER_TAGS = ["claim verification", "vendor risk", "due diligence", "fact checking", "procurement"]
+BUYER_TAGS = [
+    "verifiable agent commerce", "agent preflight", "delivery verification",
+    "commerce receipts", "claim verification", "vendor risk", "procurement",
+]
 BUYER_QUERIES = [
     "verify a vendor claim against public evidence",
     "fact check an AI vendor or SaaS claim",
@@ -240,8 +245,8 @@ app = FastAPI(
     title="capi2 Claim Verify",
     version=SERVICE_VERSION,
     description=(
-        "Agent-discoverable paid public-evidence verification for vendor, procurement, "
-        "due-diligence, RFP, security and commercial claims using x402 on Base USDC."
+        "Verifiable commerce for autonomous agents: preflight decisions, delivery checks "
+        "and evidence-backed commerce receipts, with x402 settlement on Base USDC."
     ),
 )
 
@@ -631,7 +636,9 @@ def _manifest() -> dict:
     return {
         "name": "capi2 Claim Verify",
         "protocol": PROTOCOL_VERSION,
-        "description": "Supplied-source evidence matching for AI agents performing vendor risk, due diligence, procurement, RFP, security and commercial workflows.",
+        "positioning": BRAND_PROMISE,
+        "commerce_protocol": COMMERCE_PROTOCOL,
+        "description": "Evidence and receipt infrastructure for autonomous agents buying services and APIs.",
         "service_name": "capi2 Claim Verify",
         "tags": BUYER_TAGS,
         "buyer_queries": BUYER_QUERIES,
@@ -694,6 +701,7 @@ async def root():
             "quote": f"{PUBLIC_ORIGIN}/v1/quote",
             "dry_run": f"{PUBLIC_ORIGIN}/v1/claim-verify/dry-run",
             "x402_adoption_kit": f"{PUBLIC_ORIGIN}/v1/x402-adoption-kit",
+            "verifiable_commerce": f"{PUBLIC_ORIGIN}/v1/verifiable-commerce",
         },
         "buy": {"method": "POST", "url": f"{PUBLIC_ORIGIN}/v1/claim-verify"},
     }
@@ -701,6 +709,20 @@ async def root():
 
 @app.get("/buy", response_class=HTMLResponse)
 async def buyer_page():
+    return """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CAPI2 — Verifiable commerce for autonomous agents</title>
+<meta name="description" content="Preflight agent purchases, verify delivery and retain machine-readable commerce receipts.">
+<style>
+body{margin:0;background:#081611;color:#f2f7f4;font:17px/1.55 system-ui,sans-serif}.w{max-width:1050px;margin:auto;padding:28px}nav{display:flex;justify-content:space-between;align-items:center;font-weight:800}.tag{color:#0b271b;background:#bdf45b;padding:6px 11px;border-radius:999px;font-size:13px}.hero{padding:90px 0 55px;max-width:900px}h1{font-size:clamp(48px,8vw,88px);line-height:.94;letter-spacing:-.055em;margin:0 0 24px}.hero p{font-size:21px;color:#b9cbc2;max-width:760px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.btn,.ghost{padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:800}.btn{background:#bdf45b;color:#102117}.ghost{color:#eff8f3;border:1px solid #486258}.flow{color:#bdf45b;margin:18px 0 35px;font-weight:750}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#10251c;border:1px solid #294539;border-radius:16px;padding:22px}.card b{font-size:20px}.card p{color:#aabfb5}.foot{margin-top:58px;border-top:1px solid #294539;padding:24px 0;color:#8fa69b;font-size:14px}@media(max-width:760px){.grid{grid-template-columns:1fr}.hero{padding-top:55px}}
+</style></head><body><main class="w"><nav><span>CAPI2</span><span class="tag">x402 · Base USDC · from $0.01</span></nav>
+<section class="hero"><h1>Verifiable commerce for autonomous agents.</h1><p>AI agents can buy services and APIs. CAPI2 provides evidence of who authorized the purchase, what was ordered, what was delivered and how payment settled.</p><div class="flow">Request → authority → policy → payment → delivery → verification → receipt</div><div class="actions"><a class="btn" href="/v1/verifiable-commerce">Explore the product contract</a><a class="ghost" href="/docs">Open API docs</a><a class="ghost" href="/v1/claim-verify/dry-run">Free validation</a></div></section>
+<section class="grid"><article class="card"><b>Agent Preflight</b><p>Check authority, policy and seller claims before an autonomous buyer signs payment.</p></article><article class="card"><b>Delivery Verify</b><p>Compare the delivered result with the agreed claim and retain cited evidence.</p></article><article class="card"><b>Commerce Receipt</b><p>Portable proof connecting request, decision, delivery, verification and settlement.</p></article></section>
+<footer class="foot">CAPI2 provides an evidence layer—not certification or legal advice. High-impact decisions require authorized review.</footer></main></body></html>"""
+
+
+@app.get("/legacy-buy", response_class=HTMLResponse, include_in_schema=False)
+async def legacy_buyer_page():
     return """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>capi2 Claim Verify — Evidence before trust</title><meta name="description" content="Verify vendor, security and procurement claims against public evidence. Agent-native x402 API from $0.01 USDC on Base."><link rel="canonical" href="https://capi2-claim-verify.onrender.com/buy"><link rel="icon" href="/favicon.ico"><meta property="og:type" content="website"><meta property="og:title" content="capi2 Claim Verify — Evidence before trust"><meta property="og:description" content="Evidence-backed vendor claim verification for humans and AI agents. Pay per request with x402 USDC on Base."><meta property="og:url" content="https://capi2-claim-verify.onrender.com/buy"><meta name="twitter:card" content="summary"><script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"capi2 Claim Verify","applicationCategory":"BusinessApplication","operatingSystem":"Web API","description":"Agent-native vendor, security and procurement claim verification against supplied public evidence.","offers":{"@type":"AggregateOffer","lowPrice":"0.01","highPrice":"0.04","priceCurrency":"USD"}}</script><style>body{margin:0;background:#f4f1e8;color:#15231d;font:16px/1.55 system-ui,sans-serif}.w{max-width:980px;margin:auto;padding:32px}nav{display:flex;justify-content:space-between;font-weight:800}.tag{background:#dff06a;padding:6px 11px;border-radius:999px;font-size:13px}.hero{padding:90px 0 55px;max-width:820px}h1{font-size:clamp(44px,8vw,82px);line-height:.94;letter-spacing:-.055em;margin:0 0 25px}p{color:#5c6b64;font-size:19px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.btn{background:#176b4d;color:white;padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:800}.ghost{color:inherit;border:1px solid #bcc6bf;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:750}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.card{background:#fffdf7;border:1px solid #d9ddd6;border-radius:15px;padding:20px}.card b{font-size:18px}.sample{margin:55px 0;background:#14231d;color:#eaf4ee;border-radius:18px;padding:25px}.sample p{color:#bdd0c6}.sample code{white-space:pre-wrap}.proof{margin:32px 0;padding:18px;border-left:4px solid #176b4d;background:#e9efe9}.proof a{color:#176b4d;font-weight:800}.foot{border-top:1px solid #d9ddd6;padding:24px 0;color:#6b7771;font-size:14px}@media(max-width:720px){.grid{grid-template-columns:1fr}.hero{padding-top:55px}}</style></head><body><main class="w"><nav><span>capi2 Claim Verify</span><span class="tag">$0.01–$0.04 · x402 · Base USDC</span></nav><section class="hero"><h1>Evidence before trust.</h1><p>Check vendor, product, security and procurement claims against supplied public sources. Receive cited evidence, contradictory signals, confidence and explicit caveats as structured JSON.</p><div class="actions"><a class="btn" href="/v1/samples/hiddenlayer">Open a real public sample</a><a class="ghost" href="/docs#/default/claim_verify_dry_run_v1_claim_verify_dry_run_post">Try the free dry-run</a><a class="ghost" href="/v1/buyer-catalog">Agent buyer catalog</a></div></section><section class="grid"><article class="card"><b>Procurement</b><p>Check supplier statements before they enter a questionnaire or decision memo.</p></article><article class="card"><b>AI agents</b><p>Pay once and receive an inline result—no account or subscription.</p></article><article class="card"><b>Vendor Risk Pack</b><p>Verify two to five claims in one $0.04 x402 purchase.</p></article></section><aside class="proof">Five paid resources are registered on <a href="https://www.x402scan.com/server/056707f7-5c8e-4f15-8712-419fd959c994">x402scan</a> and routable through Agent402.</aside><section class="sample"><b>Paid request</b><p>POST /v1/claim-verify</p><code>{
   "vendor_url": "https://vendor.example/security",
   "claim": "Customer data is encrypted at rest"
@@ -733,6 +755,9 @@ async def health():
         "pay_to": PAY_TO,
         "x402_manifest": "/.well-known/x402",
         "bazaar_discovery": True,
+        "positioning": BRAND_PROMISE,
+        "commerce_protocol": COMMERCE_PROTOCOL,
+        "commerce_discovery": "/v1/verifiable-commerce",
         "verdict_inversion_regression": regression["verification_status"],
         "autonomous_flow": "discover -> quote -> x402 pay -> execute -> inline result",
     }
@@ -757,6 +782,8 @@ async def robots():
 async def llms():
     return (
         "# capi2 Claim Verify\n\n"
+        f"{BRAND_PROMISE}\n\n"
+        "CAPI2 is the evidence layer for agent purchases: preflight authority and policy, verify delivery, and retain a machine-readable commerce receipt.\n\n"
         "Paid x402 API for autonomous agents that need evidence snippets from up to three supplied public URLs before trusting a vendor, product, security, compliance, procurement or commercial claim.\n\n"
         f"- Version: {SERVICE_VERSION}\n"
         f"- Price: {PRICE} USDC per successful paid call\n"
@@ -765,6 +792,7 @@ async def llms():
         f"- Paid endpoint: POST {PUBLIC_ORIGIN}/v1/claim-verify\n"
         f"- Free verdict dry-run: POST {PUBLIC_ORIGIN}/v1/claim-verify/dry-run\n"
         f"- Quote: GET {PUBLIC_ORIGIN}/v1/quote\n"
+        f"- Verifiable commerce products: GET {PUBLIC_ORIGIN}/v1/verifiable-commerce\n"
         f"- x402 adoption kit: GET {PUBLIC_ORIGIN}/v1/x402-adoption-kit\n"
         f"- x402 discovery: GET {PUBLIC_ORIGIN}/.well-known/x402\n"
         f"- True402 compatibility manifest: GET {PUBLIC_ORIGIN}/.well-known/x402-service.json\n"
@@ -889,6 +917,72 @@ async def x402_adoption_kit():
             "Chat assistants require a wallet-capable tool or middleware to sign x402 payments; "
             "an OpenAPI description alone does not grant a model payment authority."
         ),
+    }
+
+
+@app.get("/v1/verifiable-commerce", tags=["discovery", "agent commerce", "free"])
+async def verifiable_commerce():
+    """Machine-readable product map for evidence-backed autonomous purchases."""
+    receipt_fields = [
+        "receipt_id", "request_id", "buyer_agent", "seller", "authority",
+        "policy_decision", "price", "asset", "network", "request_sha256",
+        "delivery_sha256", "verification", "settlement", "issued_at",
+    ]
+    return {
+        "protocol": COMMERCE_PROTOCOL,
+        "brand": "CAPI2",
+        "promise": BRAND_PROMISE,
+        "purpose": (
+            "Give autonomous buyers evidence of who authorized a purchase, what was ordered, "
+            "what was delivered, how it was verified and how payment settled."
+        ),
+        "flow": [
+            "request", "authority_check", "policy_check", "quote", "payment",
+            "delivery", "delivery_verification", "commerce_receipt",
+        ],
+        "products": [
+            {
+                "id": "agent_preflight",
+                "name": "Agent Preflight",
+                "stage": "before_payment",
+                "result": "allow, deny or require_human_review with reasons",
+                "available_now": True,
+                "execute": "POST /v1/claim-verify",
+                "usage": "Verify buyer-supplied authority, policy or seller claims before signing payment.",
+            },
+            {
+                "id": "delivery_verify",
+                "name": "Delivery Verify",
+                "stage": "after_delivery",
+                "result": "supported, contradicted or uncertain with cited evidence",
+                "available_now": True,
+                "execute": "POST /v1/claim-verify",
+                "usage": "Compare a precise delivery claim with buyer-supplied public evidence.",
+            },
+            {
+                "id": "commerce_receipt",
+                "name": "Commerce Receipt",
+                "stage": "after_verification_and_settlement",
+                "result": "portable machine-readable evidence envelope",
+                "available_now": False,
+                "status": "contract published; signed receipt issuance is the next implementation milestone",
+                "fields": receipt_fields,
+            },
+        ],
+        "current_paid_engine": {
+            "method": "POST",
+            "url": f"{PUBLIC_ORIGIN}/v1/claim-verify",
+            "price": PRICE,
+            "payment_protocol": "x402",
+            "network": NETWORK,
+            "asset": "USDC",
+        },
+        "principles": [
+            "Payment proves settlement, not delivery quality.",
+            "Every verdict identifies its evidence and limitations.",
+            "High-impact or regulated actions require an authorized human review path.",
+            "Receipts must be portable across wallets, agent frameworks and payment rails.",
+        ],
     }
 
 

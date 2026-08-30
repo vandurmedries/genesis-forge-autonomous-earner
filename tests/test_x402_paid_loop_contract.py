@@ -136,6 +136,26 @@ class PaidLoopContractTests(unittest.TestCase):
         self.assertEqual(visual.status_code, 200)
         self.assertEqual(visual.headers["content-type"], "image/png")
 
+    def test_verifiable_commerce_positioning_and_product_contract(self):
+        response = self.client.get("/v1/verifiable-commerce")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["protocol"], "capi2.verifiable_commerce/1.0")
+        self.assertEqual(body["promise"], "Verifiable commerce for autonomous agents.")
+        products = {product["id"]: product for product in body["products"]}
+        self.assertEqual(
+            set(products),
+            {"agent_preflight", "delivery_verify", "commerce_receipt"},
+        )
+        self.assertTrue(products["agent_preflight"]["available_now"])
+        self.assertTrue(products["delivery_verify"]["available_now"])
+        self.assertFalse(products["commerce_receipt"]["available_now"])
+        self.assertIn("settlement", products["commerce_receipt"]["fields"])
+
+        landing = self.client.get("/buy")
+        self.assertEqual(landing.status_code, 200)
+        self.assertIn("Verifiable commerce for autonomous agents", landing.text)
+
     def test_ai_vendor_ddq_pack_validates_and_challenges_for_twenty_five_cents(self):
         pack = {"claims": [self.request_body, self.request_body, self.request_body]}
 
