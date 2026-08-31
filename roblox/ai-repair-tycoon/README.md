@@ -18,4 +18,4 @@ A small Roblox MVP: repair broken AI units, earn credits, buy efficiency upgrade
 5. Run `rojo serve` in this folder and connect through the Studio Rojo plugin.
 6. Enable Studio access to API services only in a test universe, test receipts, then publish.
 
-The purchase handler uses `MarketplaceService.ProcessReceipt`; product IDs remain disabled (`0`) until explicitly configured.
+Purchases are deliberately disabled in this prototype. Persistence and Developer Products should only be activated after publication to a test universe, configuration of real product IDs, and successful receipt-flow tests.
