@@ -1,0 +1,49 @@
+name: Apify monetization route check
+
+on:
+  push:
+    branches:
+      - ops/apify-route-check
+    paths:
+      - .github/workflows/apify-route-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check linked Apify token and public Actors
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${APIFY_TOKEN:-}" ]; then
+            echo "APIFY_TOKEN_MISSING"
+            exit 42
+          fi
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${APIFY_TOKEN}" \
+            https://api.apify.com/v2/users/me > account.json
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${APIFY_TOKEN}" \
+            https://api.apify.com/v2/acts/capi2~my-actor > actor.json
+
+          jq -e '.data.username == "capi2"' account.json >/dev/null
+          jq -e '.data.isPublic == true' actor.json >/dev/null
+
+          jq '{username:.data.username}' account.json
+          jq '{id:.data.id,name:.data.name,title:.data.title,isPublic:.data.isPublic,stats:.data.stats,pricingInfos:.data.pricingInfos}' actor.json
+
+          {
+            echo '## Apify route check'
+            echo '- Repository secret APIFY_TOKEN: configured'
+            echo '- Authenticated Apify username: capi2'
+            echo '- capi2/my-actor: public and API-accessible'
+            echo '- No Actor run was started and no usage charge was incurred'
+          } >> "$GITHUB_STEP_SUMMARY"
