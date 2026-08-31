@@ -1,4 +1,4 @@
-"""Marketplace application with the AckMint paid delivery layer installed."""
+"""Marketplace application with AckMint and commercial offers installed."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from . import legacy_app as marketplace
 from .legacy_app import app
 from capi2.ackmint import core
 from capi2.ackmint.integration import install
+from capi2.revenue_offers.integration import install as install_revenue_offers
 
 
 # x402 2.21 creates the POST body schema correctly but its startup validator
@@ -35,6 +36,8 @@ try:
     install(app, marketplace)
 finally:
     x402_bazaar.declare_discovery_extension = _original_declare
+
+install_revenue_offers(app, marketplace)
 
 
 @app.on_event("startup")
