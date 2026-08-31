@@ -1,0 +1,91 @@
+name: Apify inbound market research
+
+on:
+  push:
+    branches:
+      - research/apify-inbound-market
+    paths:
+      - .github/workflows/apify-inbound-market-research.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query the public Apify Store API
+        shell: bash
+        run: |
+          set -euo pipefail
+          terms=(
+            "invoice"
+            "pdf extract"
+            "receipt extraction"
+            "public tender"
+            "government procurement"
+            "job scraper"
+            "reviews scraper"
+            "price tracker"
+            "product matching"
+            "EAN barcode"
+            "EU VAT VIES"
+            "company registry"
+            "website audit"
+            "accessibility audit"
+            "privacy policy monitor"
+            "terms change monitor"
+            "webhook"
+            "openapi audit"
+            "sitemap monitor"
+            "real estate price"
+            "used car price"
+            "flight price"
+            "app store reviews"
+            "trustpilot reviews"
+            "shopify products"
+          )
+
+          printf 'term\tresults\tusers30_sum\truns30_sum\ttop_actor\ttop_users30\ttop_runs30\ttop_pricing\n' > market.tsv
+
+          for term in "${terms[@]}"; do
+            encoded="$(python -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$term")"
+            curl --fail --silent --show-error --retry 4 --retry-all-errors \
+              "https://api.apify.com/v2/store?search=${encoded}&sortBy=popularity&limit=100" \
+              -o response.json
+
+            jq -r --arg term "$term" '
+              .data as $d |
+              ($d.items // []) as $items |
+              ($items | map(.stats.totalUsers30Days // 0) | add // 0) as $users |
+              ($items | map(.stats.publicActorRunStats30Days.TOTAL // 0) | add // 0) as $runs |
+              ($items[0] // {}) as $top |
+              [
+                $term,
+                ($d.total // 0),
+                $users,
+                $runs,
+                (($top.username // "") + "/" + ($top.name // "")),
+                ($top.stats.totalUsers30Days // 0),
+                ($top.stats.publicActorRunStats30Days.TOTAL // 0),
+                ($top.currentPricingInfo.pricingModel // "")
+              ] | @tsv
+            ' response.json >> market.tsv
+          done
+
+          echo '=== RANKED BY SEARCH USERS (30D) ==='
+          { head -n 1 market.tsv; tail -n +2 market.tsv | sort -t $'\t' -k3,3nr; } | column -t -s $'\t'
+
+          echo '=== LOW COMPETITION WITH NONZERO DEMAND ==='
+          awk -F '\t' 'NR==1 || ($2 <= 20 && $3 > 0)' market.tsv | sort -t $'\t' -k3,3nr | column -t -s $'\t'
+
+          {
+            echo '## Apify inbound market scan'
+            echo ''
+            echo 'Public Apify Store API queried on the workflow run date. No cold outreach was performed.'
+            echo ''
+            echo '```tsv'
+            { head -n 1 market.tsv; tail -n +2 market.tsv | sort -t $'\t' -k3,3nr; } | head -n 16
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
