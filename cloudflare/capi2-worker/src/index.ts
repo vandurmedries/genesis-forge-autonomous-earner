@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -47,7 +48,7 @@ const facilitator = new HTTPFacilitatorClient({ url: workerEnv.FACILITATOR_URL }
 const resourceServer = new x402ResourceServer(facilitator).register(
   workerEnv.NETWORK,
   new ExactEvmScheme(),
-);
+).registerExtension(bazaarResourceServerExtension);
 
 resourceServer.onAfterSettle(async ({ result, requirements }) => {
   console.log(JSON.stringify({
@@ -59,6 +60,37 @@ resourceServer.onAfterSettle(async ({ result, requirements }) => {
   }));
 });
 
+const discoveryExtensions = {
+  "/v1/claim-verify": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { vendor_url: "https://example.com/security", claim: "Customer data is encrypted at rest." },
+    inputSchema: {
+      properties: {
+        vendor_url: { type: "string", format: "uri" },
+        source_urls: { type: "array", maxItems: 3, items: { type: "string", format: "uri" } },
+        claim: { type: "string", minLength: 3, maxLength: 1200 },
+      },
+      required: ["claim"],
+    },
+    output: { example: { verification_status: "supported", confidence: 0.88, evidence_source_urls: ["https://example.com/security"] } },
+  }),
+  "/v1/vendor-risk-pack": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { claims: [{ vendor_url: "https://example.com/security", claim: "Customer data is encrypted at rest." }] },
+    inputSchema: { properties: { claims: { type: "array", minItems: 1, maxItems: 5 } }, required: ["claims"] },
+    output: { example: { summary: { supported: 1, contradicted: 0, uncertain: 0 }, reports: [] } },
+  }),
+  "/v1/commerce-receipts/issue": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { seller: "https://seller.example/report", request: { claim: "A" }, delivery: { verdict: "supported" } },
+    inputSchema: {
+      properties: { seller: { type: "string" }, request: { type: "object" }, delivery: { type: "object" } },
+      required: ["seller", "request", "delivery"],
+    },
+    output: { example: { protocol: "capi2.commerce_receipt/1.0", receipt_id: "cr_...", request_sha256: "...", delivery_sha256: "..." } },
+  }),
+} as const;
+
 const paidRoutes = {
   "POST /v1/claim-verify": {
     accepts: {
@@ -69,6 +101,7 @@ const paidRoutes = {
     },
     description: "Evidence-backed verification of one public vendor or product claim.",
     mimeType: "application/json",
+    extensions: discoveryExtensions["/v1/claim-verify"],
   },
   "POST /v1/vendor-risk-pack": {
     accepts: {
@@ -79,6 +112,7 @@ const paidRoutes = {
     },
     description: "Multi-claim vendor risk and evidence pack.",
     mimeType: "application/json",
+    extensions: discoveryExtensions["/v1/vendor-risk-pack"],
   },
   "POST /v1/commerce-receipts/issue": {
     accepts: {
@@ -89,6 +123,7 @@ const paidRoutes = {
     },
     description: "Issue a deterministic CAPI2 commerce receipt.",
     mimeType: "application/json",
+    extensions: discoveryExtensions["/v1/commerce-receipts/issue"],
   },
 };
 
@@ -152,6 +187,7 @@ app.use("*", async (c, next) => {
       maxTimeoutSeconds: 300,
       extra: { name: "USD Coin", version: "2" },
     }],
+    extensions: withPostMethod(discoveryExtensions[c.req.path as keyof typeof discoveryExtensions]),
   };
   c.header("PAYMENT-REQUIRED", btoa(JSON.stringify(challenge)));
   c.header("Cache-Control", "private, no-store");
@@ -187,12 +223,14 @@ app.get("/health", (c) => c.json({
 }));
 
 app.get("/.well-known/x402", (c) => c.json({
+  version: 1,
   x402Version: 2,
   service: "CAPI2 Agent Commerce",
   network: c.env.NETWORK,
   asset: USDC,
   payTo: c.env.PAY_TO,
-  resources: PRODUCTS.map((product) => ({
+  resources: PRODUCTS.map((product) => `${c.env.PUBLIC_ORIGIN}${product.path}`),
+  offers: PRODUCTS.map((product) => ({
     ...product,
     resource: `${c.env.PUBLIC_ORIGIN}${product.path}`,
   })),
@@ -509,6 +547,14 @@ async function sha256Text(value: string): Promise<string> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function withPostMethod(extension: Record<string, unknown>): Record<string, unknown> {
+  const copy = structuredClone(extension);
+  const bazaar = copy.bazaar;
+  if (isRecord(bazaar) && isRecord(bazaar.info) && isRecord(bazaar.info.input)) {
+    bazaar.info.input.method = "POST";
+  }
+  return copy;
+}
 function requireRecord(value: unknown, name: string): Record<string, unknown> { if (!isRecord(value)) throw new InputError(`${name} must be an object`); return value; }
 function optionalString(value: unknown): string | null { return typeof value === "string" && value.trim() ? value.trim() : null; }
 function requiredString(input: Record<string, unknown>, field: string, min: number, max: number): string {
@@ -518,10 +564,35 @@ function requiredString(input: Record<string, unknown>, field: string, min: numb
 }
 
 function openApi(origin: string) {
+  const paths: Record<string, Record<string, unknown>> = Object.fromEntries(PRODUCTS.map((product) => [product.path, {
+    [product.method.toLowerCase()]: {
+      summary: product.buyer_job,
+      security: [{ x402Payment: [] }],
+      "x-payment-info": {
+        protocols: ["x402"],
+        price: { mode: "fixed", currency: "USD", amount: product.price_usd.toFixed(2) },
+        network: "eip155:8453",
+      },
+      responses: {
+        "200": { description: "Paid delivery" },
+        "402": { description: "x402 payment required" },
+      },
+    },
+  }]));
+  paths["/v1/commerce-receipts/verify"] = {
+    post: { summary: "Verify receipt payload integrity for free.", security: [], responses: { "200": { description: "Integrity result" } } },
+  };
   return {
     openapi: "3.1.0",
-    info: { title: "CAPI2 Agent Commerce", version: SERVICE_VERSION, description: "Sustainable x402 commerce with evidence and verifiable receipts." },
+    info: {
+      title: "CAPI2 Agent Commerce",
+      version: SERVICE_VERSION,
+      description: "Sustainable x402 commerce with evidence and verifiable receipts.",
+      contact: { url: `${origin}/health` },
+      "x-guidance": "Call the free discovery endpoints first. Paid POST routes return an x402 v2 challenge; only retry with PAYMENT-SIGNATURE after the buyer approves the exact amount, asset, network, recipient, and resource.",
+    },
     servers: [{ url: origin }],
-    paths: Object.fromEntries(PRODUCTS.map((product) => [product.path, { [product.method.toLowerCase()]: { summary: product.buyer_job, responses: { "200": { description: "Paid delivery" }, "402": { description: "x402 payment required" } } } }])),
+    components: { securitySchemes: { x402Payment: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment authorization" } } },
+    paths,
   };
 }
