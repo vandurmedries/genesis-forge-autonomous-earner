@@ -126,13 +126,15 @@ signing-key endpoint.
 
 ## Deployment
 
-`railway.json` is the primary deployment contract. Configure the service root as
-`capi2/x402_service`; Railway then installs `requirements.txt`, starts
+`vercel.json` is the primary production deployment contract. Deploy this directory
+as the project root. `bootstrap.py` is the ASGI entrypoint, and the public origin is
+derived automatically from Vercel's injected deployment hostname unless
+`CAPI2_CLAIM_VERIFY_ORIGIN` is explicitly configured.
+
+`railway.json` remains a container-hosting alternative. Configure the service root
+as `capi2/x402_service`; Railway then installs `requirements.txt`, starts
 `uvicorn bootstrap:app --host 0.0.0.0 --port $PORT`, and checks `/health`.
-`render.yaml` and `vercel.json` remain as legacy/fallback deployment targets.
-For Vercel, deploy this directory as the project root. `bootstrap.py` is the ASGI
-entrypoint, and the public origin is derived automatically from Vercel's injected
-deployment hostname unless `CAPI2_CLAIM_VERIFY_ORIGIN` is explicitly configured.
+`render.yaml` is retained only as a legacy deployment target.
 
 ## Unpaid x402 challenge
 
