@@ -22,7 +22,7 @@ describe("CAPI2 Worker contracts", () => {
   it("publishes three paid resources", async () => {
     const response = await worker.fetch(new Request("https://example.test/v1/buyer-catalog"), testEnv as Env, {} as ExecutionContext);
     const body = await response.json<{ resources: Array<{ price_usd: number }> }>();
-    expect(body.resources.map((item) => item.price_usd)).toEqual([0.005, 0.1, 0.25, 0.01]);
+    expect(body.resources.map((item) => item.price_usd)).toEqual([0.005, 0.005, 0.1, 0.25, 0.01]);
   });
 
   it("quotes every product with an exact approval scope", async () => {
@@ -67,6 +67,18 @@ describe("CAPI2 Worker contracts", () => {
           policy: { max_amount_atomic: "10000", allowed_networks: ["eip155:8453"] },
         },
       }),
+    }), testEnv as Env, {} as ExecutionContext);
+    const body = await response.json<{ valid: boolean; exact_payment: { amount: string } }>();
+    expect(response.status).toBe(200);
+    expect(body.valid).toBe(true);
+    expect(body.exact_payment.amount).toBe("5000");
+  });
+
+  it("preflights the public web extractor at half a cent", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/preflight", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ product_id: "agent_web_extract", payload: { url: "https://example.com/", query: "domain facts", max_chars: 4000 } }),
     }), testEnv as Env, {} as ExecutionContext);
     const body = await response.json<{ valid: boolean; exact_payment: { amount: string } }>();
     expect(response.status).toBe(200);

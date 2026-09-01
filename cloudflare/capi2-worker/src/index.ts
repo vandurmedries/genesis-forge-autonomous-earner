@@ -14,6 +14,7 @@ const MAX_SOURCE_BYTES = 160_000;
 const MAX_SOURCES = 3;
 
 const PRICES = {
+  webExtract: { display: "$0.005", atomic: 5_000, costCeilingMicrousd: 500 },
   paymentSafety: { display: "$0.005", atomic: 5_000, costCeilingMicrousd: 250 },
   claimVerify: { display: "$0.10", atomic: 100_000, costCeilingMicrousd: 20_000 },
   riskPack: { display: "$0.25", atomic: 250_000, costCeilingMicrousd: 50_000 },
@@ -21,6 +22,13 @@ const PRICES = {
 } as const;
 
 const PRODUCTS = [
+  {
+    id: "agent_web_extract",
+    method: "POST",
+    path: "/v1/web-extract",
+    price_usd: 0.005,
+    buyer_job: "Fetch one public HTTPS page and return compact readable text plus a content hash for agent grounding.",
+  },
   {
     id: "x402_buyer_guard",
     method: "POST",
@@ -69,6 +77,19 @@ resourceServer.onAfterSettle(async ({ result, requirements }) => {
 });
 
 const discoveryExtensions = {
+  "/v1/web-extract": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { url: "https://example.com/", query: "main product facts", max_chars: 8000 },
+    inputSchema: {
+      properties: {
+        url: { type: "string", format: "uri" },
+        query: { type: "string", maxLength: 300 },
+        max_chars: { type: "integer", minimum: 500, maximum: 12000 },
+      },
+      required: ["url"],
+    },
+    output: { example: { final_url: "https://example.com/", content_type: "text/html", text: "Example Domain...", content_sha256: "...", truncated: false } },
+  }),
   "/v1/x402-payment-safety": declareDiscoveryExtension({
     bodyType: "json",
     input: {
@@ -112,6 +133,17 @@ const discoveryExtensions = {
 } as const;
 
 const paidRoutes = {
+  "POST /v1/web-extract": {
+    accepts: {
+      scheme: "exact",
+      price: PRICES.webExtract.display,
+      network: workerEnv.NETWORK,
+      payTo: workerEnv.PAY_TO,
+    },
+    description: "Compact readable text and integrity hash from one public HTTPS page.",
+    mimeType: "application/json",
+    extensions: discoveryExtensions["/v1/web-extract"],
+  },
   "POST /v1/x402-payment-safety": {
     accepts: {
       scheme: "exact",
@@ -246,6 +278,12 @@ app.get("/", (c) => c.json({
   catalog: `${c.env.PUBLIC_ORIGIN}/v1/buyer-catalog`,
 }));
 
+app.get("/favicon.svg", (c) => c.body(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#111827"/><path d="M14 20h36v8H22v8h24v8H22v8h-8z" fill="#34d399"/></svg>`,
+  200,
+  { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" },
+));
+
 app.get("/health", (c) => c.json({
   ok: true,
   service: "capi2-agent-commerce",
@@ -366,6 +404,16 @@ app.post("/v1/claim-verify/dry-run", async (c) => {
   return c.json({ ...classifyClaim(claim, [{ requested_url: "inline:evidence", final_url: "inline:evidence", status: "checked", text: bestSnippet(evidenceText, claim) }]), billable: false });
 });
 
+app.post("/v1/web-extract", async (c) => {
+  const input = await readJson(c.req.raw);
+  const url = assertPublicUrl(requiredString(input, "url", 8, 2_000));
+  const query = optionalString(input.query);
+  if (query && query.length > 300) throw new InputError("query must contain at most 300 characters");
+  const maxChars = input.max_chars === undefined ? 8_000 : Number(input.max_chars);
+  if (!Number.isInteger(maxChars) || maxChars < 500 || maxChars > 12_000) throw new InputError("max_chars must be an integer between 500 and 12000");
+  return c.json(await extractPublicPage(url, query, maxChars));
+});
+
 app.post("/v1/x402-payment-safety", async (c) => {
   const input = await readJson(c.req.raw);
   const paymentRequired = requireRecord(input.payment_required, "payment_required");
@@ -479,6 +527,7 @@ type CommerceEvent = {
 };
 
 function priceForRoute(route: string) {
+  if (route === "/v1/web-extract") return PRICES.webExtract;
   if (route === "/v1/x402-payment-safety") return PRICES.paymentSafety;
   if (route === "/v1/claim-verify") return PRICES.claimVerify;
   if (route === "/v1/vendor-risk-pack") return PRICES.riskPack;
@@ -487,6 +536,16 @@ function priceForRoute(route: string) {
 }
 
 function validateProductPayload(productId: string, payload: Record<string, unknown>): void {
+  if (productId === "agent_web_extract") {
+    assertPublicUrl(requiredString(payload, "url", 8, 2_000));
+    const query = optionalString(payload.query);
+    if (query && query.length > 300) throw new InputError("query must contain at most 300 characters");
+    if (payload.max_chars !== undefined) {
+      const maxChars = Number(payload.max_chars);
+      if (!Number.isInteger(maxChars) || maxChars < 500 || maxChars > 12_000) throw new InputError("max_chars must be an integer between 500 and 12000");
+    }
+    return;
+  }
   if (productId === "x402_buyer_guard") {
     requireRecord(payload.payment_required, "payment_required");
     const policy = requireRecord(payload.policy, "policy");
@@ -673,6 +732,65 @@ async function inspectSource(url: string, claim: string): Promise<SourceResult> 
   } catch (error) {
     return { requested_url: url, final_url: url, status: "failed", text: "", error: error instanceof Error ? error.message : "fetch failed" };
   }
+}
+
+async function extractPublicPage(url: string, query: string | null, maxChars: number) {
+  const response = await fetch(url, {
+    headers: { "user-agent": "CAPI2-WebExtract/1.0", accept: "text/html,text/plain,application/json" },
+    redirect: "error",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) throw new InputError(`upstream returned HTTP ${response.status}`);
+  const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (!contentType.startsWith("text/") && contentType !== "application/json") throw new InputError("upstream content type is not readable text or JSON");
+  const declaredLength = Number(response.headers.get("content-length") ?? "0");
+  if (declaredLength > MAX_SOURCE_BYTES) throw new InputError("source too large");
+  const reader = response.body?.getReader();
+  if (!reader) throw new InputError("upstream returned an empty body");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_SOURCE_BYTES) { await reader.cancel(); throw new InputError("source too large"); }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  const raw = new TextDecoder().decode(bytes);
+  const title = contentType === "text/html" ? raw.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() ?? null : null;
+  const readable = contentType === "text/html"
+    ? raw.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ")
+    : raw;
+  const normalized = readable.replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/\s+/g, " ").trim();
+  const selected = query ? relevantText(normalized, query, maxChars) : normalized.slice(0, maxChars);
+  return {
+    protocol: "capi2.web_extract/1.0",
+    requested_url: url,
+    final_url: response.url,
+    content_type: contentType,
+    title,
+    query,
+    text: selected,
+    content_sha256: await sha256Text(raw),
+    source_bytes: total,
+    returned_chars: selected.length,
+    truncated: selected.length < normalized.length,
+    fetched_at: new Date().toISOString(),
+    limitations: ["Public HTTPS only; redirects, credentials, custom headers, scripts and binary content are not supported.", "Returned text is source material, not a truth or copyright certification."],
+  };
+}
+
+function relevantText(text: string, query: string, maxChars: number): string {
+  const terms = keywords(query);
+  const blocks = text.split(/(?<=[.!?])\s+/).filter((block) => block.length >= 20);
+  return blocks.map((block, index) => ({ block, index, score: terms.filter((term) => block.toLowerCase().includes(term)).length }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ block }) => block)
+    .join(" ")
+    .slice(0, maxChars);
 }
 
 function classifyClaim(claim: string, sources: SourceResult[]) {
