@@ -6,11 +6,5 @@
   ],
   "routes": [
     {"src": "/(.*)", "dest": "bootstrap.py"}
-  ],
-  "functions": {
-    "bootstrap.py": {
-      "maxDuration": 60,
-      "excludeFiles": "{__pycache__/**,tests/**,**/*.pyc}"
-    }
-  }
+  ]
 }
