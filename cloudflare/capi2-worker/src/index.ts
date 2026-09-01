@@ -129,6 +129,35 @@ app.use("*", async (c, next) => {
   console.log(JSON.stringify({ event: "commerce_request", ...event }));
 });
 app.use("*", async (c, next) => {
+  const price = priceForRoute(c.req.path);
+  const isPaidPost = c.req.method === "POST" && price !== null;
+  const paymentHeader = c.req.header("payment-signature") ?? c.req.header("x-payment");
+  if (!isPaidPost || paymentHeader) return next();
+
+  const description = PRODUCTS.find((product) => product.path === c.req.path)?.buyer_job ?? "CAPI2 paid resource";
+  const challenge = {
+    x402Version: 2,
+    error: "Payment required",
+    resource: {
+      url: `${c.env.PUBLIC_ORIGIN}${c.req.path}`,
+      description,
+      mimeType: "application/json",
+    },
+    accepts: [{
+      scheme: "exact",
+      network: c.env.NETWORK,
+      amount: String(price.atomic),
+      asset: USDC,
+      payTo: c.env.PAY_TO,
+      maxTimeoutSeconds: 300,
+      extra: { name: "USD Coin", version: "2" },
+    }],
+  };
+  c.header("PAYMENT-REQUIRED", btoa(JSON.stringify(challenge)));
+  c.header("Cache-Control", "private, no-store");
+  return c.json(challenge, 402);
+});
+app.use("*", async (c, next) => {
   // The SDK starts facilitator discovery when middleware is constructed. Construct it
   // lazily inside a request because Workers forbids network I/O during module evaluation.
   x402Middleware ??= paymentMiddleware(paidRoutes, resourceServer);
@@ -186,6 +215,35 @@ app.get("/v1/verifiable-commerce", (c) => c.json({
     "Revenue reporting counts only settled, successfully delivered requests.",
   ],
 }));
+
+app.get("/v1/quote", (c) => c.json({
+  protocol: "capi2.quote/2.0",
+  resource: `${c.env.PUBLIC_ORIGIN}/v1/claim-verify`,
+  price: PRICES.claimVerify.display,
+  amount: String(PRICES.claimVerify.atomic),
+  asset: "USDC",
+  asset_address: USDC,
+  network: c.env.NETWORK,
+  recipient: c.env.PAY_TO,
+  scheme: "exact",
+  x402_version: 2,
+}));
+
+app.get("/v1/free-x402-market-radar", (c) => c.json({
+  protocol: "capi2.market_radar/2.0",
+  billable: false,
+  external_payments_made: false,
+  query: c.req.query("q") ?? "agent verification",
+  offers: PRODUCTS,
+  capi2_positioning: { price_usd: PRICES.claimVerify.atomic / 1_000_000, network: c.env.NETWORK },
+}));
+
+app.post("/v1/claim-verify/dry-run", async (c) => {
+  const input = await readJson(c.req.raw);
+  const claim = requiredString(input, "claim", 3, 1_200);
+  const evidenceText = requiredString(input, "evidence_text", 3, 8_000);
+  return c.json({ ...classifyClaim(claim, [{ requested_url: "inline:evidence", final_url: "inline:evidence", status: "checked", text: bestSnippet(evidenceText, claim) }]), billable: false });
+});
 
 app.post("/v1/claim-verify", async (c) => {
   const input = await readJson(c.req.raw);
