@@ -22,7 +22,7 @@ describe("CAPI2 Worker contracts", () => {
   it("publishes three paid resources", async () => {
     const response = await worker.fetch(new Request("https://example.test/v1/buyer-catalog"), testEnv as Env, {} as ExecutionContext);
     const body = await response.json<{ resources: Array<{ price_usd: number }> }>();
-    expect(body.resources.map((item) => item.price_usd)).toEqual([0.1, 0.25, 0.01]);
+    expect(body.resources.map((item) => item.price_usd)).toEqual([0.005, 0.1, 0.25, 0.01]);
   });
 
   it("quotes every product with an exact approval scope", async () => {
@@ -54,5 +54,23 @@ describe("CAPI2 Worker contracts", () => {
       body: JSON.stringify({ product_id: "claim_verify", payload: { claim: "x" } }),
     }), testEnv as Env, {} as ExecutionContext);
     expect(response.status).toBe(422);
+  });
+
+  it("preflights the x402 buyer guard at half a cent", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/preflight", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        product_id: "x402_buyer_guard",
+        payload: {
+          payment_required: { x402Version: 2, resource: { url: "https://seller.example/data" }, accepts: [] },
+          policy: { max_amount_atomic: "10000", allowed_networks: ["eip155:8453"] },
+        },
+      }),
+    }), testEnv as Env, {} as ExecutionContext);
+    const body = await response.json<{ valid: boolean; exact_payment: { amount: string } }>();
+    expect(response.status).toBe(200);
+    expect(body.valid).toBe(true);
+    expect(body.exact_payment.amount).toBe("5000");
   });
 });

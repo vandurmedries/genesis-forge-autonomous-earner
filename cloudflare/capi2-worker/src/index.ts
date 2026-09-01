@@ -14,12 +14,20 @@ const MAX_SOURCE_BYTES = 160_000;
 const MAX_SOURCES = 3;
 
 const PRICES = {
+  paymentSafety: { display: "$0.005", atomic: 5_000, costCeilingMicrousd: 250 },
   claimVerify: { display: "$0.10", atomic: 100_000, costCeilingMicrousd: 20_000 },
   riskPack: { display: "$0.25", atomic: 250_000, costCeilingMicrousd: 50_000 },
   receiptIssue: { display: "$0.01", atomic: 10_000, costCeilingMicrousd: 1_000 },
 } as const;
 
 const PRODUCTS = [
+  {
+    id: "x402_buyer_guard",
+    method: "POST",
+    path: "/v1/x402-payment-safety",
+    price_usd: 0.005,
+    buyer_job: "Apply a deterministic allow, warn, or block policy to an x402 challenge before signing it.",
+  },
   {
     id: "claim_verify",
     method: "POST",
@@ -61,6 +69,18 @@ resourceServer.onAfterSettle(async ({ result, requirements }) => {
 });
 
 const discoveryExtensions = {
+  "/v1/x402-payment-safety": declareDiscoveryExtension({
+    bodyType: "json",
+    input: {
+      payment_required: { x402Version: 2, resource: { url: "https://seller.example/data" }, accepts: [{ network: "eip155:8453", amount: "10000", asset: USDC, payTo: "0x0000000000000000000000000000000000000001" }] },
+      policy: { max_amount_atomic: "10000", allowed_networks: ["eip155:8453"], require_https: true },
+    },
+    inputSchema: {
+      properties: { payment_required: { type: "object" }, policy: { type: "object" } },
+      required: ["payment_required", "policy"],
+    },
+    output: { example: { verdict: "allow", risk_score: 0, findings: [], approved_option: { network: "eip155:8453", amount: "10000" } } },
+  }),
   "/v1/claim-verify": declareDiscoveryExtension({
     bodyType: "json",
     input: { vendor_url: "https://example.com/security", claim: "Customer data is encrypted at rest." },
@@ -92,6 +112,17 @@ const discoveryExtensions = {
 } as const;
 
 const paidRoutes = {
+  "POST /v1/x402-payment-safety": {
+    accepts: {
+      scheme: "exact",
+      price: PRICES.paymentSafety.display,
+      network: workerEnv.NETWORK,
+      payTo: workerEnv.PAY_TO,
+    },
+    description: "Deterministic buyer-side policy gate for an x402 payment challenge.",
+    mimeType: "application/json",
+    extensions: discoveryExtensions["/v1/x402-payment-safety"],
+  },
   "POST /v1/claim-verify": {
     accepts: {
       scheme: "exact",
@@ -335,6 +366,13 @@ app.post("/v1/claim-verify/dry-run", async (c) => {
   return c.json({ ...classifyClaim(claim, [{ requested_url: "inline:evidence", final_url: "inline:evidence", status: "checked", text: bestSnippet(evidenceText, claim) }]), billable: false });
 });
 
+app.post("/v1/x402-payment-safety", async (c) => {
+  const input = await readJson(c.req.raw);
+  const paymentRequired = requireRecord(input.payment_required, "payment_required");
+  const policy = requireRecord(input.policy, "policy");
+  return c.json(await evaluatePaymentSafety(paymentRequired, policy));
+});
+
 app.post("/v1/claim-verify", async (c) => {
   const input = await readJson(c.req.raw);
   const claim = requiredString(input, "claim", 3, 1_200);
@@ -441,6 +479,7 @@ type CommerceEvent = {
 };
 
 function priceForRoute(route: string) {
+  if (route === "/v1/x402-payment-safety") return PRICES.paymentSafety;
   if (route === "/v1/claim-verify") return PRICES.claimVerify;
   if (route === "/v1/vendor-risk-pack") return PRICES.riskPack;
   if (route === "/v1/commerce-receipts/issue") return PRICES.receiptIssue;
@@ -448,6 +487,16 @@ function priceForRoute(route: string) {
 }
 
 function validateProductPayload(productId: string, payload: Record<string, unknown>): void {
+  if (productId === "x402_buyer_guard") {
+    requireRecord(payload.payment_required, "payment_required");
+    const policy = requireRecord(payload.policy, "policy");
+    const maxAmount = requiredString(policy, "max_amount_atomic", 1, 40);
+    if (!/^\d+$/.test(maxAmount)) throw new InputError("max_amount_atomic must be an unsigned integer string");
+    stringArray(policy.allowed_networks, "allowed_networks");
+    stringArray(policy.allowed_assets, "allowed_assets");
+    stringArray(policy.allowed_recipients, "allowed_recipients");
+    return;
+  }
   if (productId === "claim_verify") {
     requiredString(payload, "claim", 3, 1_200);
     sourceUrls(payload);
@@ -471,6 +520,62 @@ function validateProductPayload(productId: string, payload: Record<string, unkno
     return;
   }
   throw new InputError("unknown product_id");
+}
+
+async function evaluatePaymentSafety(paymentRequired: Record<string, unknown>, policy: Record<string, unknown>) {
+  const findings: Array<{ severity: "warn" | "block"; code: string; message: string }> = [];
+  const accepts = Array.isArray(paymentRequired.accepts) ? paymentRequired.accepts.filter(isRecord) : [];
+  const resource = isRecord(paymentRequired.resource) ? paymentRequired.resource : {};
+  const resourceUrl = optionalString(resource.url);
+  const maxAmountText = requiredString(policy, "max_amount_atomic", 1, 40);
+  if (!/^\d+$/.test(maxAmountText)) throw new InputError("max_amount_atomic must be an unsigned integer string");
+  const maxAmount = BigInt(maxAmountText);
+  const allowedNetworks = stringArray(policy.allowed_networks, "allowed_networks");
+  const allowedAssets = stringArray(policy.allowed_assets, "allowed_assets");
+  const allowedRecipients = stringArray(policy.allowed_recipients, "allowed_recipients").map((value) => value.toLowerCase());
+
+  if (paymentRequired.x402Version !== 2) findings.push({ severity: "block", code: "unsupported_x402_version", message: "Only x402 v2 is allowed." });
+  if (!resourceUrl) findings.push({ severity: "block", code: "missing_resource_url", message: "Challenge has no resource URL." });
+  else if ((policy.require_https ?? true) === true && !resourceUrl.startsWith("https://")) findings.push({ severity: "block", code: "resource_not_https", message: "Resource URL is not HTTPS." });
+  if (accepts.length === 0) findings.push({ severity: "block", code: "no_payment_option", message: "Challenge has no payment option." });
+
+  const evaluated = accepts.map((option) => {
+    const amountText = optionalString(option.amount);
+    const network = optionalString(option.network);
+    const asset = optionalString(option.asset);
+    const payTo = optionalString(option.payTo);
+    const optionFindings: typeof findings = [];
+    if (!amountText || !/^\d+$/.test(amountText)) optionFindings.push({ severity: "block", code: "invalid_amount", message: "Payment amount is not an unsigned integer." });
+    else if (BigInt(amountText) > maxAmount) optionFindings.push({ severity: "block", code: "amount_above_limit", message: "Payment exceeds max_amount_atomic." });
+    if (allowedNetworks.length && (!network || !allowedNetworks.includes(network))) optionFindings.push({ severity: "block", code: "network_not_allowed", message: "Payment network is not allowed by policy." });
+    if (allowedAssets.length && (!asset || !allowedAssets.map((value) => value.toLowerCase()).includes(asset.toLowerCase()))) optionFindings.push({ severity: "block", code: "asset_not_allowed", message: "Payment asset is not allowed by policy." });
+    if (!payTo || !/^0x[a-fA-F0-9]{40}$/.test(payTo)) optionFindings.push({ severity: "block", code: "invalid_recipient", message: "Recipient is not a valid EVM address." });
+    else if (allowedRecipients.length && !allowedRecipients.includes(payTo.toLowerCase())) optionFindings.push({ severity: "block", code: "recipient_not_allowed", message: "Recipient is not allow-listed." });
+    return { scheme: option.scheme ?? null, network, amount: amountText, asset, payTo, findings: optionFindings, allowed: optionFindings.every((finding) => finding.severity !== "block") };
+  });
+  const approvedOption = evaluated.find((option) => option.allowed) ?? null;
+  findings.push(...(approvedOption ? approvedOption.findings : evaluated.flatMap((option) => option.findings)));
+  if (!allowedRecipients.length) findings.push({ severity: "warn", code: "recipient_not_allowlisted", message: "Policy did not supply an allowed_recipients list." });
+  const verdict = findings.some((finding) => finding.severity === "block") || !approvedOption ? "block" : findings.some((finding) => finding.severity === "warn") ? "warn" : "allow";
+  return {
+    protocol: "capi2.x402_buyer_guard/1.0",
+    billable: true,
+    verdict,
+    risk_score: verdict === "block" ? 100 : verdict === "warn" ? 35 : 0,
+    resource: resourceUrl,
+    challenge_sha256: await sha256Json(paymentRequired),
+    policy_sha256: await sha256Json(policy),
+    approved_option: approvedOption,
+    findings,
+    options_evaluated: evaluated.length,
+    limitations: ["This is a deterministic policy check, not recipient reputation or delivery-quality proof.", "The buyer must independently approve and sign any payment."],
+  };
+}
+
+function stringArray(value: unknown, field: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) throw new InputError(`${field} must be an array of strings`);
+  return [...new Set(value.map((item) => (item as string).trim()))];
 }
 
 async function recordEvent(db: D1Database, event: CommerceEvent): Promise<void> {
