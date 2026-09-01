@@ -130,7 +130,13 @@ const paidRoutes = {
 const app = new Hono<{ Bindings: Env }>();
 let x402Middleware: ReturnType<typeof paymentMiddleware> | undefined;
 
-app.use("*", cors({ origin: "*", allowMethods: ["GET", "POST", "OPTIONS"], exposeHeaders: ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"] }));
+app.use("*", cors({
+  origin: "*",
+  allowMethods: ["GET", "POST", "OPTIONS"],
+  allowHeaders: ["Content-Type", "PAYMENT-SIGNATURE", "X-PAYMENT", "Idempotency-Key", "X-Request-Id"],
+  exposeHeaders: ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE", "X-Request-Id"],
+  maxAge: 86_400,
+}));
 app.use("*", async (c, next) => {
   const started = Date.now();
   const requestId = c.req.header("x-request-id") ?? `req_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -240,7 +246,21 @@ app.get("/v1/buyer-catalog", (c) => c.json({
   protocol: "capi2.buyer_catalog/2.0",
   settlement: { network: c.env.NETWORK, asset: "USDC", recipient: c.env.PAY_TO },
   margin_policy: { minimum_gross_margin_bps: Number(c.env.MIN_MARGIN_BPS), revenue_basis: "settled external payments only" },
-  resources: PRODUCTS,
+  checkout: {
+    steps: [
+      "GET /v1/quote?product_id=<id>",
+      "POST /v1/preflight with product_id and payload (free)",
+      "POST the quoted resource without payment to obtain PAYMENT-REQUIRED",
+      "After buyer approval, sign the exact challenge and retry with PAYMENT-SIGNATURE",
+      "Treat PAYMENT-RESPONSE plus a successful delivery body as the completed purchase",
+    ],
+    preflight: `${c.env.PUBLIC_ORIGIN}/v1/preflight`,
+  },
+  resources: PRODUCTS.map((product) => ({
+    ...product,
+    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=${product.id}`,
+    preflight: `${c.env.PUBLIC_ORIGIN}/v1/preflight`,
+  })),
 }));
 
 app.get("/v1/verifiable-commerce", (c) => c.json({
@@ -254,18 +274,50 @@ app.get("/v1/verifiable-commerce", (c) => c.json({
   ],
 }));
 
-app.get("/v1/quote", (c) => c.json({
-  protocol: "capi2.quote/2.0",
-  resource: `${c.env.PUBLIC_ORIGIN}/v1/claim-verify`,
-  price: PRICES.claimVerify.display,
-  amount: String(PRICES.claimVerify.atomic),
-  asset: "USDC",
-  asset_address: USDC,
-  network: c.env.NETWORK,
-  recipient: c.env.PAY_TO,
-  scheme: "exact",
-  x402_version: 2,
-}));
+app.get("/v1/quote", (c) => {
+  const requestedId = c.req.query("product_id") ?? "claim_verify";
+  const product = PRODUCTS.find((item) => item.id === requestedId);
+  if (!product) return c.json({ error: "unknown product_id", available_product_ids: PRODUCTS.map((item) => item.id) }, 404);
+  const price = priceForRoute(product.path)!;
+  return c.json({
+    protocol: "capi2.quote/2.1",
+    product_id: product.id,
+    resource: `${c.env.PUBLIC_ORIGIN}${product.path}`,
+    method: product.method,
+    buyer_job: product.buyer_job,
+    price: price.display,
+    amount: String(price.atomic),
+    decimals: 6,
+    asset: "USDC",
+    asset_address: USDC,
+    network: c.env.NETWORK,
+    recipient: c.env.PAY_TO,
+    scheme: "exact",
+    x402_version: 2,
+    preflight: `${c.env.PUBLIC_ORIGIN}/v1/preflight`,
+    approval_scope: ["amount", "asset", "network", "recipient", "resource"],
+  });
+});
+
+app.post("/v1/preflight", async (c) => {
+  const input = await readJson(c.req.raw);
+  const productId = requiredString(input, "product_id", 3, 100);
+  const product = PRODUCTS.find((item) => item.id === productId);
+  if (!product) return c.json({ valid: false, billable: false, error: "unknown product_id", available_product_ids: PRODUCTS.map((item) => item.id) }, 422);
+  const payload = requireRecord(input.payload, "payload");
+  validateProductPayload(productId, payload);
+  const price = priceForRoute(product.path)!;
+  return c.json({
+    protocol: "capi2.preflight/1.0",
+    valid: true,
+    billable: false,
+    product_id: product.id,
+    resource: `${c.env.PUBLIC_ORIGIN}${product.path}`,
+    exact_payment: { amount: String(price.atomic), display: price.display, asset: "USDC", network: c.env.NETWORK, recipient: c.env.PAY_TO },
+    payload_sha256: await sha256Json(payload),
+    next: "Request the resource without a payment header to receive the authoritative x402 challenge.",
+  });
+});
 
 app.get("/v1/free-x402-market-radar", (c) => c.json({
   protocol: "capi2.market_radar/2.0",
@@ -393,6 +445,32 @@ function priceForRoute(route: string) {
   if (route === "/v1/vendor-risk-pack") return PRICES.riskPack;
   if (route === "/v1/commerce-receipts/issue") return PRICES.receiptIssue;
   return null;
+}
+
+function validateProductPayload(productId: string, payload: Record<string, unknown>): void {
+  if (productId === "claim_verify") {
+    requiredString(payload, "claim", 3, 1_200);
+    sourceUrls(payload);
+    return;
+  }
+  if (productId === "vendor_risk_pack") {
+    if (!Array.isArray(payload.claims) || payload.claims.length < 1 || payload.claims.length > 5) {
+      throw new InputError("claims must contain between 1 and 5 items");
+    }
+    for (const item of payload.claims) {
+      const claim = requireRecord(item, "each claim");
+      requiredString(claim, "claim", 3, 1_200);
+      sourceUrls(claim);
+    }
+    return;
+  }
+  if (productId === "commerce_receipt") {
+    requiredString(payload, "seller", 3, 2_000);
+    requireRecord(payload.request, "request");
+    requireRecord(payload.delivery, "delivery");
+    return;
+  }
+  throw new InputError("unknown product_id");
 }
 
 async function recordEvent(db: D1Database, event: CommerceEvent): Promise<void> {
@@ -581,6 +659,12 @@ function openApi(origin: string) {
   }]));
   paths["/v1/commerce-receipts/verify"] = {
     post: { summary: "Verify receipt payload integrity for free.", security: [], responses: { "200": { description: "Integrity result" } } },
+  };
+  paths["/v1/quote"] = {
+    get: { summary: "Get exact payment terms for a product for free.", security: [], responses: { "200": { description: "Exact x402 quote" }, "404": { description: "Unknown product" } } },
+  };
+  paths["/v1/preflight"] = {
+    post: { summary: "Validate a product payload before payment for free.", security: [], responses: { "200": { description: "Valid payload and exact payment terms" }, "422": { description: "Invalid payload" } } },
   };
   return {
     openapi: "3.1.0",

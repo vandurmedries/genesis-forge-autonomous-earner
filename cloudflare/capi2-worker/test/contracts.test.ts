@@ -24,4 +24,35 @@ describe("CAPI2 Worker contracts", () => {
     const body = await response.json<{ resources: Array<{ price_usd: number }> }>();
     expect(body.resources.map((item) => item.price_usd)).toEqual([0.1, 0.25, 0.01]);
   });
+
+  it("quotes every product with an exact approval scope", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/quote?product_id=vendor_risk_pack"), testEnv as Env, {} as ExecutionContext);
+    const body = await response.json<{ amount: string; resource: string; approval_scope: string[] }>();
+    expect(response.status).toBe(200);
+    expect(body.amount).toBe("250000");
+    expect(body.resource).toBe("https://example.test/v1/vendor-risk-pack");
+    expect(body.approval_scope).toEqual(["amount", "asset", "network", "recipient", "resource"]);
+  });
+
+  it("preflights a valid payload without charging", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/preflight", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ product_id: "claim_verify", payload: { claim: "Workers run globally", source_urls: ["https://developers.cloudflare.com/workers/"] } }),
+    }), testEnv as Env, {} as ExecutionContext);
+    const body = await response.json<{ valid: boolean; billable: boolean; exact_payment: { amount: string } }>();
+    expect(response.status).toBe(200);
+    expect(body.valid).toBe(true);
+    expect(body.billable).toBe(false);
+    expect(body.exact_payment.amount).toBe("100000");
+  });
+
+  it("rejects invalid preflight payloads before payment", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/preflight", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ product_id: "claim_verify", payload: { claim: "x" } }),
+    }), testEnv as Env, {} as ExecutionContext);
+    expect(response.status).toBe(422);
+  });
 });
