@@ -277,7 +277,11 @@ app.use("*", async (c, next) => {
     estimated_cost_microusd: price.costCeilingMicrousd,
     latency_ms: Date.now() - started,
     status_code: c.res.status,
-    metadata_json: JSON.stringify({ monitor: c.req.header("x-capi2-monitor") === "true" }),
+    metadata_json: JSON.stringify({
+      monitor: c.req.header("x-capi2-monitor") === "true",
+      traffic_class: trafficClass(c.req.header("user-agent"), c.req.header("referer")),
+      payment_attempt: Boolean(paymentHeaderFor(c.req.raw)),
+    }),
   };
   c.executionCtx.waitUntil(recordEvent(c.env.DB, event));
   console.log(JSON.stringify({ event: "commerce_request", ...event }));
@@ -321,11 +325,19 @@ app.use("*", async (c, next) => {
 
 app.get("/", (c) => c.json({
   service: "CAPI2 Agent Commerce",
-  promise: "Verifiable commerce for autonomous agents.",
+  promise: "Fresh public web evidence for autonomous agents, paid per successful call.",
   version: SERVICE_VERSION,
+  recommended_product: {
+    id: "agent_web_extract",
+    buyer_job: "Turn one public HTTPS page into compact grounded text with a content hash.",
+    price: PRICES.webExtract.display,
+    free_demo: `${c.env.PUBLIC_ORIGIN}/v1/web-extract/demo`,
+    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_web_extract`,
+  },
   health: `${c.env.PUBLIC_ORIGIN}/health`,
   discovery: `${c.env.PUBLIC_ORIGIN}/.well-known/x402`,
   catalog: `${c.env.PUBLIC_ORIGIN}/v1/buyer-catalog`,
+  agent_instructions: `${c.env.PUBLIC_ORIGIN}/llms.txt`,
 }));
 
 app.get("/favicon.svg", (c) => c.body(
@@ -333,6 +345,32 @@ app.get("/favicon.svg", (c) => c.body(
   200,
   { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" },
 ));
+
+app.get("/llms.txt", (c) => c.text(`# CAPI2 Agent Commerce
+
+Use CAPI2 when an agent needs fresh public web text, multi-source grounding, or an x402 compatibility check without an API key or subscription.
+
+## Recommended first purchase
+- Product: agent_web_extract
+- Free proof: GET ${c.env.PUBLIC_ORIGIN}/v1/web-extract/demo
+- Quote: GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_web_extract
+- Buy: POST ${c.env.PUBLIC_ORIGIN}/v1/web-extract
+- Price: ${PRICES.webExtract.display} USDC on Base (${c.env.NETWORK})
+- Recipient: ${c.env.PAY_TO}
+
+## Safe purchase sequence
+1. Inspect the free demo.
+2. POST /v1/preflight with product_id and payload; this is free.
+3. POST the paid resource without a payment header and inspect the HTTP 402 challenge.
+4. Obtain buyer approval for amount, asset, network, recipient and resource.
+5. Retry with PAYMENT-SIGNATURE and require both PAYMENT-RESPONSE and a successful delivery body.
+
+## Example payload
+{"url":"https://example.com/","query":"main facts","max_chars":4000}
+
+All products: ${c.env.PUBLIC_ORIGIN}/v1/buyer-catalog
+OpenAPI: ${c.env.PUBLIC_ORIGIN}/openapi.json
+`));
 
 app.get("/health", (c) => c.json({
   ok: true,
@@ -446,6 +484,12 @@ app.get("/v1/free-x402-market-radar", (c) => c.json({
   offers: PRODUCTS,
   capi2_positioning: { price_usd: PRICES.claimVerify.atomic / 1_000_000, network: c.env.NETWORK },
 }));
+
+app.get("/v1/web-extract/demo", async (c) => {
+  const demo = await extractPublicPage("https://example.com/", "example domain", 1_500);
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.json({ ...demo, billable: false, demo: true, next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_web_extract` });
+});
 
 app.post("/v1/claim-verify/dry-run", async (c) => {
   const input = await readJson(c.req.raw);
@@ -614,6 +658,18 @@ function priceForRoute(route: string) {
   if (route === "/v1/vendor-risk-pack") return PRICES.riskPack;
   if (route === "/v1/commerce-receipts/issue") return PRICES.receiptIssue;
   return null;
+}
+
+function paymentHeaderFor(request: Request): string | null {
+  return request.headers.get("payment-signature") ?? request.headers.get("x-payment");
+}
+
+function trafficClass(userAgent: string | undefined, referer: string | undefined): string {
+  const value = `${userAgent ?? ""} ${referer ?? ""}`.toLowerCase();
+  if (value.includes("capi2") || value.includes("monitor")) return "internal_or_monitor";
+  if (value.includes("x402scan") || value.includes("agentcash") || value.includes("scanner") || value.includes("bot")) return "marketplace_or_bot";
+  if (value.includes("mozilla") || value.includes("chrome") || value.includes("safari")) return "browser";
+  return "unknown_client";
 }
 
 function validateProductPayload(productId: string, payload: Record<string, unknown>): void {
@@ -802,7 +858,7 @@ function isPrivateIp(host: string): boolean {
 
 async function inspectSource(url: string, claim: string): Promise<SourceResult> {
   try {
-    const response = await fetch(url, { headers: { "user-agent": "CAPI2-EvidenceBot/2.0", accept: "text/html,text/plain,application/json" }, redirect: "error", signal: AbortSignal.timeout(8_000) });
+    const response = await fetch(url, { headers: { "user-agent": "CAPI2-EvidenceBot/2.0", accept: "text/html,text/plain,application/json" }, redirect: "manual", signal: AbortSignal.timeout(8_000) });
     if (!response.ok) return { requested_url: url, final_url: url, status: "failed", text: "", error: `HTTP ${response.status}` };
     const length = Number(response.headers.get("content-length") ?? "0");
     if (length > MAX_SOURCE_BYTES) return { requested_url: url, final_url: url, status: "failed", text: "", error: "source too large" };
@@ -836,7 +892,7 @@ async function auditX402Route(url: string, method: string) {
     method,
     headers: { "user-agent": "CAPI2-X402-Audit/1.0", accept: "application/json", ...(method === "POST" ? { "content-type": "application/json" } : {}) },
     body: method === "POST" ? "{}" : undefined,
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(8_000),
   });
   const findings: Array<{ severity: "warn" | "block"; code: string; message: string }> = [];
@@ -881,7 +937,7 @@ async function auditX402Route(url: string, method: string) {
 async function extractPublicPage(url: string, query: string | null, maxChars: number) {
   const response = await fetch(url, {
     headers: { "user-agent": "CAPI2-WebExtract/1.0", accept: "text/html,text/plain,application/json" },
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new InputError(`upstream returned HTTP ${response.status}`);
@@ -1032,6 +1088,9 @@ function openApi(origin: string) {
   };
   paths["/v1/preflight"] = {
     post: { summary: "Validate a product payload before payment for free.", security: [], responses: { "200": { description: "Valid payload and exact payment terms" }, "422": { description: "Invalid payload" } } },
+  };
+  paths["/v1/web-extract/demo"] = {
+    get: { summary: "Inspect a cached free example of the web extraction delivery format.", security: [], responses: { "200": { description: "Free non-billable demo delivery" } } },
   };
   return {
     openapi: "3.1.0",

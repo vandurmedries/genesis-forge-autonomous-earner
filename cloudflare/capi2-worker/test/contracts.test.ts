@@ -25,6 +25,15 @@ describe("CAPI2 Worker contracts", () => {
     expect(body.resources.map((item) => item.price_usd)).toEqual([0.008, 0.015, 0.005, 0.005, 0.1, 0.25, 0.01]);
   });
 
+  it("focuses the landing response and publishes agent purchase instructions", async () => {
+    const landing = await worker.fetch(new Request("https://example.test/"), testEnv as Env, {} as ExecutionContext);
+    const landingBody = await landing.json<{ recommended_product: { id: string; free_demo: string } }>();
+    expect(landingBody.recommended_product.id).toBe("agent_web_extract");
+    expect(landingBody.recommended_product.free_demo).toContain("/v1/web-extract/demo");
+    const instructions = await worker.fetch(new Request("https://example.test/llms.txt"), testEnv as Env, {} as ExecutionContext);
+    expect(await instructions.text()).toContain("Safe purchase sequence");
+  });
+
   it("quotes every product with an exact approval scope", async () => {
     const response = await worker.fetch(new Request("https://example.test/v1/quote?product_id=vendor_risk_pack"), testEnv as Env, {} as ExecutionContext);
     const body = await response.json<{ amount: string; resource: string; approval_scope: string[] }>();
