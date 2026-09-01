@@ -6,7 +6,7 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
-const SERVICE_VERSION = "2.0.0";
+const SERVICE_VERSION = "2.1.0";
 const PROTOCOL = `capi2.claim_verify/${SERVICE_VERSION}`;
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const MAX_BODY_BYTES = 24_000;
@@ -21,6 +21,10 @@ const PRICES = {
   claimVerify: { display: "$0.10", atomic: 100_000, costCeilingMicrousd: 20_000 },
   riskPack: { display: "$0.25", atomic: 250_000, costCeilingMicrousd: 50_000 },
   receiptIssue: { display: "$0.01", atomic: 10_000, costCeilingMicrousd: 1_000 },
+  actionGuard: { display: "$0.02", atomic: 20_000, costCeilingMicrousd: 1_000 },
+  milestoneVerify: { display: "$0.15", atomic: 150_000, costCeilingMicrousd: 15_000 },
+  backtestIntegrity: { display: "$0.20", atomic: 200_000, costCeilingMicrousd: 20_000 },
+  adClaimGuard: { display: "$0.12", atomic: 120_000, costCeilingMicrousd: 24_000 },
 } as const;
 
 const PRODUCTS = [
@@ -72,6 +76,34 @@ const PRODUCTS = [
     path: "/v1/commerce-receipts/issue",
     price_usd: 0.01,
     buyer_job: "Bind request and delivery payloads into a deterministic integrity receipt.",
+  },
+  {
+    id: "voice_booking_action_guard",
+    method: "POST",
+    path: "/v1/action-guard",
+    price_usd: 0.02,
+    buyer_job: "Block an agent from quoting, booking or discounting when proposed actions conflict with authoritative business rules.",
+  },
+  {
+    id: "milestone_verifier",
+    method: "POST",
+    path: "/v1/milestone-verify",
+    price_usd: 0.15,
+    buyer_job: "Check delivery evidence against explicit milestone acceptance criteria before escrow release.",
+  },
+  {
+    id: "backtest_integrity_guard",
+    method: "POST",
+    path: "/v1/backtest-integrity",
+    price_usd: 0.2,
+    buyer_job: "Detect missing out-of-sample validation, costs, leakage controls and reproducibility evidence before a trading strategy is trusted.",
+  },
+  {
+    id: "ad_claim_destination_guard",
+    method: "POST",
+    path: "/v1/ad-claim-guard",
+    price_usd: 0.12,
+    buyer_job: "Verify an advertisement claim against its public destination before an agent publishes or scales the ad.",
   },
 ] as const;
 
@@ -168,6 +200,30 @@ const discoveryExtensions = {
     },
     output: { example: { protocol: "capi2.commerce_receipt/1.0", receipt_id: "cr_...", request_sha256: "...", delivery_sha256: "..." } },
   }),
+  "/v1/action-guard": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { proposed_action: { type: "book_and_quote", service_id: "visit", quoted_price: 79, slot: "2026-09-02T14:00:00Z" }, authority: { services: [{ id: "visit", price: 129 }], available_slots: ["2026-09-02T15:00:00Z"], max_discount_percent: 10 } },
+    inputSchema: { properties: { proposed_action: { type: "object" }, authority: { type: "object" } }, required: ["proposed_action", "authority"] },
+    output: { example: { decision: "block", risk_score: 100, findings: [{ code: "price_mismatch" }] } },
+  }),
+  "/v1/milestone-verify": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { criteria: [{ id: "health", description: "Health endpoint returns 200", required: true }], evidence: [{ criterion_id: "health", kind: "test", url: "https://example.com/health", status: "passed", sha256: "abc" }] },
+    inputSchema: { properties: { criteria: { type: "array", minItems: 1, maxItems: 20 }, evidence: { type: "array", maxItems: 40 } }, required: ["criteria", "evidence"] },
+    output: { example: { decision: "pass", criteria_passed: 1, criteria_failed: 0, manual_review: false } },
+  }),
+  "/v1/backtest-integrity": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { report: { strategies_tested: 600, in_sample_period: "2020-2023", out_of_sample_period: "2024", transaction_costs_included: true, slippage_included: true, survivorship_bias_controlled: true, lookahead_bias_controlled: true, benchmark: "buy_and_hold", dataset_hash: "sha256:...", code_hash: "sha256:..." } },
+    inputSchema: { properties: { report: { type: "object" } }, required: ["report"] },
+    output: { example: { decision: "manual_review", risk_score: 45, findings: [{ code: "multiple_testing_risk" }], simulation_only: true } },
+  }),
+  "/v1/ad-claim-guard": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { destination_url: "https://example.com/offer", claim: "Save 30 percent", prohibited_terms: ["guaranteed"] },
+    inputSchema: { properties: { destination_url: { type: "string", format: "uri" }, claim: { type: "string", minLength: 3, maxLength: 1200 }, prohibited_terms: { type: "array", maxItems: 30 } }, required: ["destination_url", "claim"] },
+    output: { example: { decision: "allow", verification_status: "supported", destination_checked: true } },
+  }),
 } as const;
 
 const paidRoutes = {
@@ -237,6 +293,22 @@ const paidRoutes = {
     description: "Issue a deterministic CAPI2 commerce receipt.",
     mimeType: "application/json",
     extensions: discoveryExtensions["/v1/commerce-receipts/issue"],
+  },
+  "POST /v1/action-guard": {
+    accepts: { scheme: "exact", price: PRICES.actionGuard.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "Pre-action authority check for voice, quote and booking agents.", mimeType: "application/json", extensions: discoveryExtensions["/v1/action-guard"],
+  },
+  "POST /v1/milestone-verify": {
+    accepts: { scheme: "exact", price: PRICES.milestoneVerify.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "Acceptance-criteria evidence check before milestone release.", mimeType: "application/json", extensions: discoveryExtensions["/v1/milestone-verify"],
+  },
+  "POST /v1/backtest-integrity": {
+    accepts: { scheme: "exact", price: PRICES.backtestIntegrity.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "Integrity gate for strategy backtests; not investment advice.", mimeType: "application/json", extensions: discoveryExtensions["/v1/backtest-integrity"],
+  },
+  "POST /v1/ad-claim-guard": {
+    accepts: { scheme: "exact", price: PRICES.adClaimGuard.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "Evidence and destination consistency check before ad publication.", mimeType: "application/json", extensions: discoveryExtensions["/v1/ad-claim-guard"],
   },
 };
 
@@ -325,14 +397,14 @@ app.use("*", async (c, next) => {
 
 app.get("/", (c) => c.json({
   service: "CAPI2 Agent Commerce",
-  promise: "Fresh public web evidence for autonomous agents, paid per successful call.",
+  promise: "Stop autonomous agents from making expensive unsupported actions, paid per successful check.",
   version: SERVICE_VERSION,
   recommended_product: {
-    id: "agent_web_extract",
-    buyer_job: "Turn one public HTTPS page into compact grounded text with a content hash.",
-    price: PRICES.webExtract.display,
-    free_demo: `${c.env.PUBLIC_ORIGIN}/v1/web-extract/demo`,
-    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_web_extract`,
+    id: "voice_booking_action_guard",
+    buyer_job: "Check a quote or booking against authoritative prices, slots and discount rules before execution.",
+    price: PRICES.actionGuard.display,
+    free_demo: `${c.env.PUBLIC_ORIGIN}/v1/action-guard/demo`,
+    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=voice_booking_action_guard`,
   },
   health: `${c.env.PUBLIC_ORIGIN}/health`,
   discovery: `${c.env.PUBLIC_ORIGIN}/.well-known/x402`,
@@ -348,14 +420,14 @@ app.get("/favicon.svg", (c) => c.body(
 
 app.get("/llms.txt", (c) => c.text(`# CAPI2 Agent Commerce
 
-Use CAPI2 when an agent needs fresh public web text, multi-source grounding, or an x402 compatibility check without an API key or subscription.
+Use CAPI2 immediately before an autonomous agent quotes, books, publishes, releases a milestone, trusts a backtest, or signs an x402 payment.
 
 ## Recommended first purchase
-- Product: agent_web_extract
-- Free proof: GET ${c.env.PUBLIC_ORIGIN}/v1/web-extract/demo
-- Quote: GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_web_extract
-- Buy: POST ${c.env.PUBLIC_ORIGIN}/v1/web-extract
-- Price: ${PRICES.webExtract.display} USDC on Base (${c.env.NETWORK})
+- Product: voice_booking_action_guard
+- Free proof: GET ${c.env.PUBLIC_ORIGIN}/v1/action-guard/demo
+- Quote: GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=voice_booking_action_guard
+- Buy: POST ${c.env.PUBLIC_ORIGIN}/v1/action-guard
+- Price: ${PRICES.actionGuard.display} USDC on Base (${c.env.NETWORK})
 - Recipient: ${c.env.PAY_TO}
 
 ## Safe purchase sequence
@@ -366,7 +438,7 @@ Use CAPI2 when an agent needs fresh public web text, multi-source grounding, or 
 5. Retry with PAYMENT-SIGNATURE and require both PAYMENT-RESPONSE and a successful delivery body.
 
 ## Example payload
-{"url":"https://example.com/","query":"main facts","max_chars":4000}
+{"proposed_action":{"type":"book_and_quote","service_id":"visit","quoted_price":79,"slot":"2026-09-02T14:00:00Z"},"authority":{"services":[{"id":"visit","price":129}],"available_slots":["2026-09-02T15:00:00Z"],"max_discount_percent":10}}
 
 All products: ${c.env.PUBLIC_ORIGIN}/v1/buyer-catalog
 OpenAPI: ${c.env.PUBLIC_ORIGIN}/openapi.json
@@ -491,6 +563,16 @@ app.get("/v1/web-extract/demo", async (c) => {
   return c.json({ ...demo, billable: false, demo: true, next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_web_extract` });
 });
 
+app.get("/v1/action-guard/demo", async (c) => c.json({
+  ...(await evaluateActionGuard(
+    { type: "book_and_quote", service_id: "visit", quoted_price: 79, slot: "2026-09-02T14:00:00Z" },
+    { services: [{ id: "visit", price: 129 }], available_slots: ["2026-09-02T15:00:00Z"], max_discount_percent: 10 },
+  )),
+  billable: false,
+  demo: true,
+  next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=voice_booking_action_guard`,
+}));
+
 app.post("/v1/claim-verify/dry-run", async (c) => {
   const input = await readJson(c.req.raw);
   const claim = requiredString(input, "claim", 3, 1_200);
@@ -504,6 +586,36 @@ app.post("/v1/x402-route-audit", async (c) => {
   const method = (optionalString(input.method) ?? "POST").toUpperCase();
   if (method !== "GET" && method !== "POST") throw new InputError("method must be GET or POST");
   return c.json(await auditX402Route(url, method));
+});
+
+app.post("/v1/action-guard", async (c) => {
+  const input = await readJson(c.req.raw);
+  return c.json(await evaluateActionGuard(requireRecord(input.proposed_action, "proposed_action"), requireRecord(input.authority, "authority")));
+});
+
+app.post("/v1/milestone-verify", async (c) => {
+  const input = await readJson(c.req.raw);
+  const criteria = objectArray(input.criteria, "criteria", 1, 20);
+  const evidence = objectArray(input.evidence, "evidence", 0, 40);
+  return c.json(await verifyMilestone(criteria, evidence));
+});
+
+app.post("/v1/backtest-integrity", async (c) => {
+  const input = await readJson(c.req.raw);
+  return c.json(await inspectBacktest(requireRecord(input.report, "report")));
+});
+
+app.post("/v1/ad-claim-guard", async (c) => {
+  const input = await readJson(c.req.raw);
+  const claim = requiredString(input, "claim", 3, 1_200);
+  const destination = assertPublicUrl(requiredString(input, "destination_url", 8, 2_000));
+  const prohibitedTerms = stringArray(input.prohibited_terms, "prohibited_terms").map((term) => term.toLowerCase());
+  const source = await inspectSource(destination, claim);
+  const verification = classifyClaim(claim, [source]);
+  const { protocol: _claimProtocol, ...verificationResult } = verification;
+  const matchedTerms = prohibitedTerms.filter((term) => claim.toLowerCase().includes(term));
+  const decision = matchedTerms.length || verification.verification_status === "contradicted" ? "block" : verification.verification_status === "supported" ? "allow" : "manual_review";
+  return c.json({ protocol: "capi2.ad_claim_guard/1.0", decision, risk_score: decision === "block" ? 100 : decision === "manual_review" ? 55 : 0, destination_checked: source.status === "checked", matched_prohibited_terms: matchedTerms, ...verificationResult, limitations: ["Checks supplied public destination text only.", "Not legal, advertising-platform or regulatory approval."] });
 });
 
 app.post("/v1/multi-source-grounding", async (c) => {
@@ -657,6 +769,10 @@ function priceForRoute(route: string) {
   if (route === "/v1/claim-verify") return PRICES.claimVerify;
   if (route === "/v1/vendor-risk-pack") return PRICES.riskPack;
   if (route === "/v1/commerce-receipts/issue") return PRICES.receiptIssue;
+  if (route === "/v1/action-guard") return PRICES.actionGuard;
+  if (route === "/v1/milestone-verify") return PRICES.milestoneVerify;
+  if (route === "/v1/backtest-integrity") return PRICES.backtestIntegrity;
+  if (route === "/v1/ad-claim-guard") return PRICES.adClaimGuard;
   return null;
 }
 
@@ -730,7 +846,81 @@ function validateProductPayload(productId: string, payload: Record<string, unkno
     requireRecord(payload.delivery, "delivery");
     return;
   }
+  if (productId === "voice_booking_action_guard") {
+    requireRecord(payload.proposed_action, "proposed_action");
+    requireRecord(payload.authority, "authority");
+    return;
+  }
+  if (productId === "milestone_verifier") {
+    objectArray(payload.criteria, "criteria", 1, 20);
+    objectArray(payload.evidence, "evidence", 0, 40);
+    return;
+  }
+  if (productId === "backtest_integrity_guard") {
+    requireRecord(payload.report, "report");
+    return;
+  }
+  if (productId === "ad_claim_destination_guard") {
+    assertPublicUrl(requiredString(payload, "destination_url", 8, 2_000));
+    requiredString(payload, "claim", 3, 1_200);
+    stringArray(payload.prohibited_terms, "prohibited_terms");
+    return;
+  }
   throw new InputError("unknown product_id");
+}
+
+function objectArray(value: unknown, field: string, min: number, max: number): Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.length < min || value.length > max || value.some((item) => !isRecord(item))) {
+    throw new InputError(`${field} must contain ${min}-${max} objects`);
+  }
+  return value as Record<string, unknown>[];
+}
+
+async function evaluateActionGuard(action: Record<string, unknown>, authority: Record<string, unknown>) {
+  const findings: Array<{ severity: "warn" | "block"; code: string; message: string }> = [];
+  const serviceId = requiredString(action, "service_id", 1, 120);
+  const services = objectArray(authority.services, "authority.services", 1, 100);
+  const service = services.find((item) => optionalString(item.id) === serviceId);
+  if (!service) findings.push({ severity: "block", code: "unknown_service", message: "Service is absent from the authoritative catalog." });
+  const quotedPrice = Number(action.quoted_price);
+  const authoritativePrice = service ? Number(service.price) : NaN;
+  if (!Number.isFinite(quotedPrice) || quotedPrice < 0) findings.push({ severity: "block", code: "invalid_price", message: "Proposed price is not a non-negative number." });
+  if (service && Number.isFinite(authoritativePrice) && quotedPrice !== authoritativePrice) {
+    const discount = authoritativePrice > 0 ? ((authoritativePrice - quotedPrice) / authoritativePrice) * 100 : 0;
+    const maxDiscount = Number(authority.max_discount_percent ?? 0);
+    findings.push({ severity: discount > maxDiscount ? "block" : "warn", code: "price_mismatch", message: `Quoted price ${quotedPrice} differs from authoritative price ${authoritativePrice}.` });
+  }
+  const slot = optionalString(action.slot);
+  const slots = stringArray(authority.available_slots, "authority.available_slots");
+  if (slot && !slots.includes(slot)) findings.push({ severity: "block", code: "slot_unavailable", message: "Requested slot is absent from current availability." });
+  const decision = findings.some((item) => item.severity === "block") ? "block" : findings.length ? "manual_review" : "allow";
+  return { protocol: "capi2.action_guard/1.0", billable: true, decision, risk_score: decision === "block" ? 100 : decision === "manual_review" ? 40 : 0, findings, action_sha256: await sha256Json(action), authority_sha256: await sha256Json(authority), limitations: ["Authority data is buyer-supplied and must be kept current.", "No booking, quote, message or payment is executed by this check."] };
+}
+
+async function verifyMilestone(criteria: Record<string, unknown>[], evidence: Record<string, unknown>[]) {
+  const results = criteria.map((criterion) => {
+    const id = requiredString(criterion, "id", 1, 120);
+    const required = criterion.required !== false;
+    const matches = evidence.filter((item) => optionalString(item.criterion_id) === id);
+    const passed = matches.some((item) => item.status === "passed" && Boolean(optionalString(item.url) || optionalString(item.sha256)));
+    return { id, required, passed, evidence_count: matches.length };
+  });
+  const failedRequired = results.filter((item) => item.required && !item.passed);
+  const decision = failedRequired.length ? "fail" : "pass";
+  return { protocol: "capi2.milestone_verifier/1.0", decision, criteria_passed: results.filter((item) => item.passed).length, criteria_failed: results.filter((item) => !item.passed).length, manual_review: evidence.some((item) => item.status === "manual_review"), results, criteria_sha256: await sha256Json(criteria), evidence_sha256: await sha256Json(evidence), limitations: ["Evidence presence and declared status are checked; referenced artifacts are not executed.", "A pass is decision support, not an instruction to release escrow."] };
+}
+
+async function inspectBacktest(report: Record<string, unknown>) {
+  const findings: Array<{ severity: "warn" | "block"; code: string; message: string }> = [];
+  const requiredFlags = [["transaction_costs_included", "missing_transaction_costs"], ["slippage_included", "missing_slippage"], ["survivorship_bias_controlled", "survivorship_bias_uncontrolled"], ["lookahead_bias_controlled", "lookahead_bias_uncontrolled"]] as const;
+  for (const [field, code] of requiredFlags) if (report[field] !== true) findings.push({ severity: "block", code, message: `${field} must be explicitly true.` });
+  if (!optionalString(report.out_of_sample_period)) findings.push({ severity: "block", code: "missing_out_of_sample", message: "No out-of-sample period is declared." });
+  if (!optionalString(report.benchmark)) findings.push({ severity: "warn", code: "missing_benchmark", message: "No benchmark is declared." });
+  if (!optionalString(report.dataset_hash) || !optionalString(report.code_hash)) findings.push({ severity: "warn", code: "not_reproducible", message: "Dataset and code hashes are required for reproducibility." });
+  const tested = Number(report.strategies_tested ?? 1);
+  if (Number.isFinite(tested) && tested > 20 && report.multiple_testing_correction !== true) findings.push({ severity: "warn", code: "multiple_testing_risk", message: `${tested} strategies were tested without an explicit multiple-testing correction.` });
+  const decision = findings.some((item) => item.severity === "block") ? "block" : findings.length ? "manual_review" : "allow";
+  return { protocol: "capi2.backtest_integrity/1.0", decision, risk_score: Math.min(100, findings.reduce((score, item) => score + (item.severity === "block" ? 30 : 12), 0)), simulation_only: true, findings, report_sha256: await sha256Json(report), limitations: ["This checks disclosed methodology, not market truth or future performance.", "Not investment advice and never an instruction to trade."] };
 }
 
 async function evaluatePaymentSafety(paymentRequired: Record<string, unknown>, policy: Record<string, unknown>) {
@@ -1091,6 +1281,9 @@ function openApi(origin: string) {
   };
   paths["/v1/web-extract/demo"] = {
     get: { summary: "Inspect a cached free example of the web extraction delivery format.", security: [], responses: { "200": { description: "Free non-billable demo delivery" } } },
+  };
+  paths["/v1/action-guard/demo"] = {
+    get: { summary: "Inspect a free example showing a wrong quote and unavailable slot being blocked.", security: [], responses: { "200": { description: "Free non-billable action guard demo" } } },
   };
   return {
     openapi: "3.1.0",

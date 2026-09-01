@@ -21,6 +21,13 @@ Railway and Vercel and uses Cloudflare D1 as an auditable commerce ledger.
 | `POST /v1/vendor-risk-pack` | $0.25 | Verify up to five vendor claims |
 | `POST /v1/commerce-receipts/issue` | $0.01 | Issue a deterministic payload-integrity receipt |
 | `POST /v1/commerce-receipts/verify` | Free | Verify receipt payload integrity |
+| `POST /v1/action-guard` | $0.02 | Stop invalid agent quotes, discounts and bookings |
+| `POST /v1/milestone-verify` | $0.15 | Check milestone evidence before escrow release |
+| `POST /v1/backtest-integrity` | $0.20 | Detect disclosed backtest methodology failures |
+| `POST /v1/ad-claim-guard` | $0.12 | Check an ad claim against its destination |
+
+`GET /v1/action-guard/demo` is a free, non-billable proof showing a wrong
+quote and unavailable appointment being blocked.
 
 ## Operations
 
