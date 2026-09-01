@@ -3,6 +3,11 @@
 Production edge API for CAPI2's x402 offers. It runs independently of Render,
 Railway and Vercel and uses Cloudflare D1 as an auditable commerce ledger.
 
+CAPI2 is positioned as a **programmable notary for autonomous agents**: it
+checks an intended action against explicit buyer authority and returns a
+tamper-evident decision receipt. This is technical integrity evidence, not
+legal notarization or an independent certification that supplied facts are true.
+
 ## Revenue rules
 
 - HTTP 402 challenges are demand signals, never revenue.
@@ -25,6 +30,10 @@ Railway and Vercel and uses Cloudflare D1 as an auditable commerce ledger.
 | `POST /v1/milestone-verify` | $0.15 | Check milestone evidence before escrow release |
 | `POST /v1/backtest-integrity` | $0.20 | Detect disclosed backtest methodology failures |
 | `POST /v1/ad-claim-guard` | $0.12 | Check an ad claim against its destination |
+| `POST /v1/action-notary` | $0.03 | Check authority and issue an action-decision receipt |
+
+`GET /v1/action-notary/demo` shows an unauthorized payment being blocked.
+`POST /v1/action-notary/verify` verifies receipt integrity without payment.
 
 `GET /v1/action-guard/demo` is a free, non-billable proof showing a wrong
 quote and unavailable appointment being blocked.

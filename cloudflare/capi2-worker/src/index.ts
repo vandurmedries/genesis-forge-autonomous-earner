@@ -6,7 +6,7 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
-const SERVICE_VERSION = "2.1.0";
+const SERVICE_VERSION = "2.2.0";
 const PROTOCOL = `capi2.claim_verify/${SERVICE_VERSION}`;
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const MAX_BODY_BYTES = 24_000;
@@ -25,6 +25,7 @@ const PRICES = {
   milestoneVerify: { display: "$0.15", atomic: 150_000, costCeilingMicrousd: 15_000 },
   backtestIntegrity: { display: "$0.20", atomic: 200_000, costCeilingMicrousd: 20_000 },
   adClaimGuard: { display: "$0.12", atomic: 120_000, costCeilingMicrousd: 24_000 },
+  actionNotary: { display: "$0.03", atomic: 30_000, costCeilingMicrousd: 1_500 },
 } as const;
 
 const PRODUCTS = [
@@ -104,6 +105,13 @@ const PRODUCTS = [
     path: "/v1/ad-claim-guard",
     price_usd: 0.12,
     buyer_job: "Verify an advertisement claim against its public destination before an agent publishes or scales the ad.",
+  },
+  {
+    id: "agent_action_notary",
+    method: "POST",
+    path: "/v1/action-notary",
+    price_usd: 0.03,
+    buyer_job: "Check an autonomous action against explicit authority rules and issue a tamper-evident decision receipt before execution.",
   },
 ] as const;
 
@@ -224,6 +232,19 @@ const discoveryExtensions = {
     inputSchema: { properties: { destination_url: { type: "string", format: "uri" }, claim: { type: "string", minLength: 3, maxLength: 1200 }, prohibited_terms: { type: "array", maxItems: 30 } }, required: ["destination_url", "claim"] },
     output: { example: { decision: "allow", verification_status: "supported", destination_checked: true } },
   }),
+  "/v1/action-notary": declareDiscoveryExtension({
+    bodyType: "json",
+    input: {
+      action: { type: "x402_purchase", amount_atomic: "20000", network: "eip155:8453", recipient: "0x0000000000000000000000000000000000000001" },
+      authority: { allowed_action_types: ["x402_purchase"], max_amount_atomic: "50000", allowed_networks: ["eip155:8453"], allowed_recipients: ["0x0000000000000000000000000000000000000001"], require_evidence_hashes: true },
+      evidence: [{ kind: "quote", sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    },
+    inputSchema: {
+      properties: { action: { type: "object" }, authority: { type: "object" }, evidence: { type: "array", maxItems: 20 } },
+      required: ["action", "authority", "evidence"],
+    },
+    output: { example: { decision: "allow", receipt_id: "an_...", integrity: { action_sha256: "...", authority_sha256: "...", evidence_sha256: "..." } } },
+  }),
 } as const;
 
 const paidRoutes = {
@@ -309,6 +330,10 @@ const paidRoutes = {
   "POST /v1/ad-claim-guard": {
     accepts: { scheme: "exact", price: PRICES.adClaimGuard.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
     description: "Evidence and destination consistency check before ad publication.", mimeType: "application/json", extensions: discoveryExtensions["/v1/ad-claim-guard"],
+  },
+  "POST /v1/action-notary": {
+    accepts: { scheme: "exact", price: PRICES.actionNotary.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "Policy gate and tamper-evident receipt for an autonomous action.", mimeType: "application/json", extensions: discoveryExtensions["/v1/action-notary"],
   },
 };
 
@@ -397,14 +422,15 @@ app.use("*", async (c, next) => {
 
 app.get("/", (c) => c.json({
   service: "CAPI2 Agent Commerce",
-  promise: "Stop autonomous agents from making expensive unsupported actions, paid per successful check.",
+  category: "Programmable notary for autonomous agents",
+  promise: "Check authority before execution and issue a tamper-evident decision receipt, paid per successful check.",
   version: SERVICE_VERSION,
   recommended_product: {
-    id: "voice_booking_action_guard",
-    buyer_job: "Check a quote or booking against authoritative prices, slots and discount rules before execution.",
-    price: PRICES.actionGuard.display,
-    free_demo: `${c.env.PUBLIC_ORIGIN}/v1/action-guard/demo`,
-    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=voice_booking_action_guard`,
+    id: "agent_action_notary",
+    buyer_job: "Check an autonomous action against explicit authority and receive a verifiable integrity receipt before execution.",
+    price: PRICES.actionNotary.display,
+    free_demo: `${c.env.PUBLIC_ORIGIN}/v1/action-notary/demo`,
+    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_action_notary`,
   },
   health: `${c.env.PUBLIC_ORIGIN}/health`,
   discovery: `${c.env.PUBLIC_ORIGIN}/.well-known/x402`,
@@ -418,16 +444,17 @@ app.get("/favicon.svg", (c) => c.body(
   { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" },
 ));
 
-app.get("/llms.txt", (c) => c.text(`# CAPI2 Agent Commerce
+app.get("/llms.txt", (c) => c.text(`# CAPI2 — Programmable Notary for Autonomous Agents
 
-Use CAPI2 immediately before an autonomous agent quotes, books, publishes, releases a milestone, trusts a backtest, or signs an x402 payment.
+Use CAPI2 immediately before an autonomous agent buys, quotes, books, publishes, releases a milestone or performs another consequential action.
 
 ## Recommended first purchase
-- Product: voice_booking_action_guard
-- Free proof: GET ${c.env.PUBLIC_ORIGIN}/v1/action-guard/demo
-- Quote: GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=voice_booking_action_guard
-- Buy: POST ${c.env.PUBLIC_ORIGIN}/v1/action-guard
-- Price: ${PRICES.actionGuard.display} USDC on Base (${c.env.NETWORK})
+- Product: agent_action_notary
+- Free proof: GET ${c.env.PUBLIC_ORIGIN}/v1/action-notary/demo
+- Quote: GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_action_notary
+- Buy: POST ${c.env.PUBLIC_ORIGIN}/v1/action-notary
+- Verify a receipt for free: POST ${c.env.PUBLIC_ORIGIN}/v1/action-notary/verify
+- Price: ${PRICES.actionNotary.display} USDC on Base (${c.env.NETWORK})
 - Recipient: ${c.env.PAY_TO}
 
 ## Safe purchase sequence
@@ -438,7 +465,7 @@ Use CAPI2 immediately before an autonomous agent quotes, books, publishes, relea
 5. Retry with PAYMENT-SIGNATURE and require both PAYMENT-RESPONSE and a successful delivery body.
 
 ## Example payload
-{"proposed_action":{"type":"book_and_quote","service_id":"visit","quoted_price":79,"slot":"2026-09-02T14:00:00Z"},"authority":{"services":[{"id":"visit","price":129}],"available_slots":["2026-09-02T15:00:00Z"],"max_discount_percent":10}}
+{"action":{"type":"x402_purchase","amount_atomic":"20000","network":"eip155:8453","recipient":"0x0000000000000000000000000000000000000001"},"authority":{"allowed_action_types":["x402_purchase"],"max_amount_atomic":"50000","allowed_networks":["eip155:8453"],"allowed_recipients":["0x0000000000000000000000000000000000000001"],"require_evidence_hashes":true},"evidence":[{"kind":"quote","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
 
 All products: ${c.env.PUBLIC_ORIGIN}/v1/buyer-catalog
 OpenAPI: ${c.env.PUBLIC_ORIGIN}/openapi.json
@@ -493,8 +520,9 @@ app.get("/v1/buyer-catalog", (c) => c.json({
 }));
 
 app.get("/v1/verifiable-commerce", (c) => c.json({
-  protocol: "capi2.verifiable_commerce/1.0",
-  promise: "Verifiable commerce for autonomous agents.",
+  protocol: "capi2.verifiable_commerce/1.1",
+  category: "Programmable notary for autonomous agents",
+  promise: "Authority checks and integrity receipts for autonomous commerce.",
   products: PRODUCTS,
   evidence_policy: [
     "Settlement proves payment finality, not delivery quality.",
@@ -573,6 +601,17 @@ app.get("/v1/action-guard/demo", async (c) => c.json({
   next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=voice_booking_action_guard`,
 }));
 
+app.get("/v1/action-notary/demo", async (c) => c.json({
+  ...(await notarizeAction(
+    { type: "x402_purchase", amount_atomic: "75000", network: "eip155:8453", recipient: "0x0000000000000000000000000000000000000002" },
+    { allowed_action_types: ["x402_purchase"], max_amount_atomic: "50000", allowed_networks: ["eip155:8453"], allowed_recipients: ["0x0000000000000000000000000000000000000001"], require_evidence_hashes: true },
+    [{ kind: "quote", sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+  )),
+  billable: false,
+  demo: true,
+  next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_action_notary`,
+}));
+
 app.post("/v1/claim-verify/dry-run", async (c) => {
   const input = await readJson(c.req.raw);
   const claim = requiredString(input, "claim", 3, 1_200);
@@ -616,6 +655,37 @@ app.post("/v1/ad-claim-guard", async (c) => {
   const matchedTerms = prohibitedTerms.filter((term) => claim.toLowerCase().includes(term));
   const decision = matchedTerms.length || verification.verification_status === "contradicted" ? "block" : verification.verification_status === "supported" ? "allow" : "manual_review";
   return c.json({ protocol: "capi2.ad_claim_guard/1.0", decision, risk_score: decision === "block" ? 100 : decision === "manual_review" ? 55 : 0, destination_checked: source.status === "checked", matched_prohibited_terms: matchedTerms, ...verificationResult, limitations: ["Checks supplied public destination text only.", "Not legal, advertising-platform or regulatory approval."] });
+});
+
+app.post("/v1/action-notary", async (c) => {
+  const input = await readJson(c.req.raw);
+  const action = requireRecord(input.action, "action");
+  const authority = requireRecord(input.authority, "authority");
+  const evidence = objectArray(input.evidence, "evidence", 0, 20);
+  return c.json(await notarizeAction(action, authority, evidence));
+});
+
+app.post("/v1/action-notary/verify", async (c) => {
+  const receipt = await readJson(c.req.raw);
+  const action = requireRecord(receipt.action, "action");
+  const authority = requireRecord(receipt.authority, "authority");
+  const evidence = objectArray(receipt.evidence, "evidence", 0, 20);
+  const decision = requiredString(receipt, "decision", 3, 30);
+  const expected = await actionNotaryIdentity(action, authority, evidence, decision);
+  const warnings: string[] = [];
+  const integrity = isRecord(receipt.integrity) ? receipt.integrity : {};
+  if (receipt.protocol !== "capi2.action_notary/1.0") warnings.push("unsupported_protocol");
+  if (integrity.action_sha256 !== expected.action_sha256) warnings.push("action_sha256_mismatch");
+  if (integrity.authority_sha256 !== expected.authority_sha256) warnings.push("authority_sha256_mismatch");
+  if (integrity.evidence_sha256 !== expected.evidence_sha256) warnings.push("evidence_sha256_mismatch");
+  if (receipt.receipt_id !== expected.receipt_id) warnings.push("receipt_id_mismatch");
+  return c.json({
+    protocol: "capi2.action_notary_verify/1.0",
+    valid: warnings.length === 0,
+    receipt_id: receipt.receipt_id ?? null,
+    warnings,
+    verification_scope: "Payload integrity and deterministic policy decision identity; not legal notarization, truth certification or proof of execution.",
+  });
 });
 
 app.post("/v1/multi-source-grounding", async (c) => {
@@ -773,6 +843,7 @@ function priceForRoute(route: string) {
   if (route === "/v1/milestone-verify") return PRICES.milestoneVerify;
   if (route === "/v1/backtest-integrity") return PRICES.backtestIntegrity;
   if (route === "/v1/ad-claim-guard") return PRICES.adClaimGuard;
+  if (route === "/v1/action-notary") return PRICES.actionNotary;
   return null;
 }
 
@@ -866,6 +937,12 @@ function validateProductPayload(productId: string, payload: Record<string, unkno
     stringArray(payload.prohibited_terms, "prohibited_terms");
     return;
   }
+  if (productId === "agent_action_notary") {
+    requireRecord(payload.action, "action");
+    requireRecord(payload.authority, "authority");
+    objectArray(payload.evidence, "evidence", 0, 20);
+    return;
+  }
   throw new InputError("unknown product_id");
 }
 
@@ -895,6 +972,69 @@ async function evaluateActionGuard(action: Record<string, unknown>, authority: R
   if (slot && !slots.includes(slot)) findings.push({ severity: "block", code: "slot_unavailable", message: "Requested slot is absent from current availability." });
   const decision = findings.some((item) => item.severity === "block") ? "block" : findings.length ? "manual_review" : "allow";
   return { protocol: "capi2.action_guard/1.0", billable: true, decision, risk_score: decision === "block" ? 100 : decision === "manual_review" ? 40 : 0, findings, action_sha256: await sha256Json(action), authority_sha256: await sha256Json(authority), limitations: ["Authority data is buyer-supplied and must be kept current.", "No booking, quote, message or payment is executed by this check."] };
+}
+
+async function actionNotaryIdentity(action: Record<string, unknown>, authority: Record<string, unknown>, evidence: Record<string, unknown>[], decision: string) {
+  const actionSha256 = await sha256Json(action);
+  const authoritySha256 = await sha256Json(authority);
+  const evidenceSha256 = await sha256Json(evidence);
+  const receiptId = `an_${(await sha256Json({ action_sha256: actionSha256, authority_sha256: authoritySha256, evidence_sha256: evidenceSha256, decision })).slice(0, 40)}`;
+  return { receipt_id: receiptId, action_sha256: actionSha256, authority_sha256: authoritySha256, evidence_sha256: evidenceSha256 };
+}
+
+async function notarizeAction(action: Record<string, unknown>, authority: Record<string, unknown>, evidence: Record<string, unknown>[]) {
+  const findings: Array<{ severity: "warn" | "block"; code: string; message: string }> = [];
+  const actionType = requiredString(action, "type", 1, 120);
+  const allowedActionTypes = stringArray(authority.allowed_action_types, "authority.allowed_action_types");
+  if (!allowedActionTypes.length || !allowedActionTypes.includes(actionType)) {
+    findings.push({ severity: "block", code: "action_type_not_allowed", message: "Action type is absent from the authority allow-list." });
+  }
+
+  const amountText = optionalString(action.amount_atomic);
+  const maxAmountText = optionalString(authority.max_amount_atomic);
+  if (amountText !== null || maxAmountText !== null) {
+    if (!amountText || !/^\d+$/.test(amountText)) findings.push({ severity: "block", code: "invalid_amount", message: "Action amount_atomic must be an unsigned integer string." });
+    if (!maxAmountText || !/^\d+$/.test(maxAmountText)) findings.push({ severity: "block", code: "invalid_amount_limit", message: "Authority max_amount_atomic must be an unsigned integer string." });
+    if (amountText && maxAmountText && /^\d+$/.test(amountText) && /^\d+$/.test(maxAmountText) && BigInt(amountText) > BigInt(maxAmountText)) {
+      findings.push({ severity: "block", code: "amount_above_authority", message: "Action amount exceeds the authoritative limit." });
+    }
+  }
+
+  const network = optionalString(action.network);
+  const allowedNetworks = stringArray(authority.allowed_networks, "authority.allowed_networks");
+  if (network && allowedNetworks.length && !allowedNetworks.includes(network)) {
+    findings.push({ severity: "block", code: "network_not_allowed", message: "Action network is absent from the authority allow-list." });
+  }
+
+  const recipient = optionalString(action.recipient);
+  const allowedRecipients = stringArray(authority.allowed_recipients, "authority.allowed_recipients").map((value) => value.toLowerCase());
+  if (recipient && allowedRecipients.length && !allowedRecipients.includes(recipient.toLowerCase())) {
+    findings.push({ severity: "block", code: "recipient_not_allowed", message: "Action recipient is absent from the authority allow-list." });
+  }
+
+  if (authority.require_evidence_hashes === true) {
+    if (!evidence.length) findings.push({ severity: "block", code: "evidence_required", message: "Authority requires at least one evidence item." });
+    if (evidence.some((item) => !/^[a-fA-F0-9]{64}$/.test(optionalString(item.sha256) ?? ""))) {
+      findings.push({ severity: "block", code: "invalid_evidence_hash", message: "Every evidence item must contain a 64-character SHA-256 hash." });
+    }
+  }
+
+  const decision = findings.some((item) => item.severity === "block") ? "block" : findings.length ? "manual_review" : "allow";
+  const identity = await actionNotaryIdentity(action, authority, evidence, decision);
+  return {
+    protocol: "capi2.action_notary/1.0",
+    billable: true,
+    decision,
+    risk_score: decision === "block" ? 100 : decision === "manual_review" ? 40 : 0,
+    receipt_id: identity.receipt_id,
+    integrity: { action_sha256: identity.action_sha256, authority_sha256: identity.authority_sha256, evidence_sha256: identity.evidence_sha256 },
+    action,
+    authority,
+    evidence,
+    findings,
+    issued_at: new Date().toISOString(),
+    limitations: ["Tamper-evident integrity receipt, not legal notarization or truth certification.", "No action, message, booking, publication or payment is executed by this service."],
+  };
 }
 
 async function verifyMilestone(criteria: Record<string, unknown>[], evidence: Record<string, unknown>[]) {
@@ -1285,12 +1425,18 @@ function openApi(origin: string) {
   paths["/v1/action-guard/demo"] = {
     get: { summary: "Inspect a free example showing a wrong quote and unavailable slot being blocked.", security: [], responses: { "200": { description: "Free non-billable action guard demo" } } },
   };
+  paths["/v1/action-notary/demo"] = {
+    get: { summary: "Inspect a free blocked-action notary receipt.", security: [], responses: { "200": { description: "Free non-billable notary demo" } } },
+  };
+  paths["/v1/action-notary/verify"] = {
+    post: { summary: "Verify an action-notary receipt for free.", security: [], responses: { "200": { description: "Receipt integrity result" } } },
+  };
   return {
     openapi: "3.1.0",
     info: {
       title: "CAPI2 Agent Commerce",
       version: SERVICE_VERSION,
-      description: "Sustainable x402 commerce with evidence and verifiable receipts.",
+      description: "Programmable authority checks and tamper-evident receipts for autonomous agents, sold through sustainable x402 commerce.",
       contact: { url: `${origin}/health` },
       "x-guidance": "Call the free discovery endpoints first. Paid POST routes return an x402 v2 challenge; only retry with PAYMENT-SIGNATURE after the buyer approves the exact amount, asset, network, recipient, and resource.",
     },
