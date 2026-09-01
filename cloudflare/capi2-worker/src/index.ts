@@ -14,6 +14,8 @@ const MAX_SOURCE_BYTES = 160_000;
 const MAX_SOURCES = 3;
 
 const PRICES = {
+  routeAudit: { display: "$0.008", atomic: 8_000, costCeilingMicrousd: 800 },
+  groundingPack: { display: "$0.015", atomic: 15_000, costCeilingMicrousd: 1_500 },
   webExtract: { display: "$0.005", atomic: 5_000, costCeilingMicrousd: 500 },
   paymentSafety: { display: "$0.005", atomic: 5_000, costCeilingMicrousd: 250 },
   claimVerify: { display: "$0.10", atomic: 100_000, costCeilingMicrousd: 20_000 },
@@ -22,6 +24,20 @@ const PRICES = {
 } as const;
 
 const PRODUCTS = [
+  {
+    id: "x402_route_audit",
+    method: "POST",
+    path: "/v1/x402-route-audit",
+    price_usd: 0.008,
+    buyer_job: "Probe one public endpoint and diagnose whether agents can discover and parse its unpaid x402 challenge.",
+  },
+  {
+    id: "multi_source_grounding",
+    method: "POST",
+    path: "/v1/multi-source-grounding",
+    price_usd: 0.015,
+    buyer_job: "Extract query-relevant text and integrity hashes from up to three buyer-supplied public HTTPS sources.",
+  },
   {
     id: "agent_web_extract",
     method: "POST",
@@ -77,6 +93,28 @@ resourceServer.onAfterSettle(async ({ result, requirements }) => {
 });
 
 const discoveryExtensions = {
+  "/v1/x402-route-audit": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { url: "https://seller.example/paid-resource", method: "POST" },
+    inputSchema: {
+      properties: { url: { type: "string", format: "uri" }, method: { type: "string", enum: ["GET", "POST"] } },
+      required: ["url"],
+    },
+    output: { example: { verdict: "ready", status_code: 402, x402_version: 2, findings: [], payment_options: 1 } },
+  }),
+  "/v1/multi-source-grounding": declareDiscoveryExtension({
+    bodyType: "json",
+    input: { query: "What are the published security controls?", source_urls: ["https://example.com/security"], max_chars_per_source: 4000 },
+    inputSchema: {
+      properties: {
+        query: { type: "string", minLength: 3, maxLength: 300 },
+        source_urls: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", format: "uri" } },
+        max_chars_per_source: { type: "integer", minimum: 500, maximum: 5000 },
+      },
+      required: ["query", "source_urls"],
+    },
+    output: { example: { query: "security controls", sources_checked: 1, extracts: [{ final_url: "https://example.com/security", text: "...", content_sha256: "..." }] } },
+  }),
   "/v1/web-extract": declareDiscoveryExtension({
     bodyType: "json",
     input: { url: "https://example.com/", query: "main product facts", max_chars: 8000 },
@@ -133,6 +171,18 @@ const discoveryExtensions = {
 } as const;
 
 const paidRoutes = {
+  "POST /v1/x402-route-audit": {
+    accepts: { scheme: "exact", price: PRICES.routeAudit.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "Seller-side compatibility audit for an unpaid x402 route.",
+    mimeType: "application/json",
+    extensions: discoveryExtensions["/v1/x402-route-audit"],
+  },
+  "POST /v1/multi-source-grounding": {
+    accepts: { scheme: "exact", price: PRICES.groundingPack.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "Query-relevant evidence extracts and hashes from up to three public sources.",
+    mimeType: "application/json",
+    extensions: discoveryExtensions["/v1/multi-source-grounding"],
+  },
   "POST /v1/web-extract": {
     accepts: {
       scheme: "exact",
@@ -404,6 +454,35 @@ app.post("/v1/claim-verify/dry-run", async (c) => {
   return c.json({ ...classifyClaim(claim, [{ requested_url: "inline:evidence", final_url: "inline:evidence", status: "checked", text: bestSnippet(evidenceText, claim) }]), billable: false });
 });
 
+app.post("/v1/x402-route-audit", async (c) => {
+  const input = await readJson(c.req.raw);
+  const url = assertPublicUrl(requiredString(input, "url", 8, 2_000));
+  const method = (optionalString(input.method) ?? "POST").toUpperCase();
+  if (method !== "GET" && method !== "POST") throw new InputError("method must be GET or POST");
+  return c.json(await auditX402Route(url, method));
+});
+
+app.post("/v1/multi-source-grounding", async (c) => {
+  const input = await readJson(c.req.raw);
+  const query = requiredString(input, "query", 3, 300);
+  const urls = sourceUrls(input);
+  const maxChars = input.max_chars_per_source === undefined ? 4_000 : Number(input.max_chars_per_source);
+  if (!Number.isInteger(maxChars) || maxChars < 500 || maxChars > 5_000) throw new InputError("max_chars_per_source must be an integer between 500 and 5000");
+  const settled = await Promise.allSettled(urls.map((url) => extractPublicPage(url, query, maxChars)));
+  const extracts: unknown[] = settled.map((result, index) => result.status === "fulfilled"
+    ? result.value
+    : { requested_url: urls[index], error: result.reason instanceof Error ? result.reason.message : "fetch failed" });
+  return c.json({
+    protocol: "capi2.multi_source_grounding/1.0",
+    query,
+    sources_requested: urls.length,
+    sources_checked: settled.filter((result) => result.status === "fulfilled").length,
+    extracts,
+    checked_at: new Date().toISOString(),
+    limitations: ["Buyer-supplied public HTTPS sources only.", "Extracted source text is grounding material, not an independent truth certification."],
+  });
+});
+
 app.post("/v1/web-extract", async (c) => {
   const input = await readJson(c.req.raw);
   const url = assertPublicUrl(requiredString(input, "url", 8, 2_000));
@@ -527,6 +606,8 @@ type CommerceEvent = {
 };
 
 function priceForRoute(route: string) {
+  if (route === "/v1/x402-route-audit") return PRICES.routeAudit;
+  if (route === "/v1/multi-source-grounding") return PRICES.groundingPack;
   if (route === "/v1/web-extract") return PRICES.webExtract;
   if (route === "/v1/x402-payment-safety") return PRICES.paymentSafety;
   if (route === "/v1/claim-verify") return PRICES.claimVerify;
@@ -536,6 +617,21 @@ function priceForRoute(route: string) {
 }
 
 function validateProductPayload(productId: string, payload: Record<string, unknown>): void {
+  if (productId === "x402_route_audit") {
+    assertPublicUrl(requiredString(payload, "url", 8, 2_000));
+    const method = (optionalString(payload.method) ?? "POST").toUpperCase();
+    if (method !== "GET" && method !== "POST") throw new InputError("method must be GET or POST");
+    return;
+  }
+  if (productId === "multi_source_grounding") {
+    requiredString(payload, "query", 3, 300);
+    sourceUrls(payload);
+    if (payload.max_chars_per_source !== undefined) {
+      const maxChars = Number(payload.max_chars_per_source);
+      if (!Number.isInteger(maxChars) || maxChars < 500 || maxChars > 5_000) throw new InputError("max_chars_per_source must be an integer between 500 and 5000");
+    }
+    return;
+  }
   if (productId === "agent_web_extract") {
     assertPublicUrl(requiredString(payload, "url", 8, 2_000));
     const query = optionalString(payload.query);
@@ -732,6 +828,54 @@ async function inspectSource(url: string, claim: string): Promise<SourceResult> 
   } catch (error) {
     return { requested_url: url, final_url: url, status: "failed", text: "", error: error instanceof Error ? error.message : "fetch failed" };
   }
+}
+
+async function auditX402Route(url: string, method: string) {
+  const started = Date.now();
+  const response = await fetch(url, {
+    method,
+    headers: { "user-agent": "CAPI2-X402-Audit/1.0", accept: "application/json", ...(method === "POST" ? { "content-type": "application/json" } : {}) },
+    body: method === "POST" ? "{}" : undefined,
+    redirect: "error",
+    signal: AbortSignal.timeout(8_000),
+  });
+  const findings: Array<{ severity: "warn" | "block"; code: string; message: string }> = [];
+  const header = response.headers.get("payment-required");
+  const headerBytes = header ? new TextEncoder().encode(header).byteLength : 0;
+  let challenge = decodeHeader(header);
+  if (!challenge) {
+    const body = (await response.text()).slice(0, 32_000);
+    try { const parsed: unknown = JSON.parse(body); challenge = isRecord(parsed) ? parsed : null; } catch { challenge = null; }
+  }
+  if (response.status !== 402) findings.push({ severity: "block", code: "not_payment_required", message: `Expected HTTP 402 but received ${response.status}.` });
+  if (!challenge) findings.push({ severity: "block", code: "challenge_unparseable", message: "No parseable PAYMENT-REQUIRED header or JSON challenge body." });
+  const accepts = challenge && Array.isArray(challenge.accepts) ? challenge.accepts.filter(isRecord) : [];
+  if (challenge && challenge.x402Version !== 2) findings.push({ severity: "block", code: "unsupported_version", message: "Challenge is not x402 v2." });
+  if (challenge && accepts.length === 0) findings.push({ severity: "block", code: "missing_payment_options", message: "Challenge has no valid accepts options." });
+  if (challenge && !isRecord(challenge.extensions)) findings.push({ severity: "warn", code: "missing_extensions", message: "Challenge exposes no discovery extensions." });
+  else if (challenge && isRecord(challenge.extensions) && !isRecord(challenge.extensions.bazaar)) findings.push({ severity: "warn", code: "missing_bazaar", message: "Challenge has no Bazaar input/output schema." });
+  if (!header) findings.push({ severity: "warn", code: "missing_payment_header", message: "Challenge exists only in the response body; v2 buyers expect PAYMENT-REQUIRED." });
+  if (headerBytes > 12_000) findings.push({ severity: "warn", code: "large_payment_header", message: "PAYMENT-REQUIRED exceeds 12 KB and may be rejected by intermediaries." });
+  for (const option of accepts) {
+    if (!optionalString(option.amount) || !/^\d+$/.test(String(option.amount))) findings.push({ severity: "block", code: "invalid_atomic_amount", message: "An option does not use an atomic-unit integer amount." });
+    if (!optionalString(option.network)?.includes(":")) findings.push({ severity: "block", code: "invalid_network", message: "An option lacks a CAIP-2 network identifier." });
+    if (!optionalString(option.payTo)) findings.push({ severity: "block", code: "missing_recipient", message: "An option has no payment recipient." });
+  }
+  const verdict = findings.some((item) => item.severity === "block") ? "blocked" : findings.some((item) => item.severity === "warn") ? "degraded" : "ready";
+  return {
+    protocol: "capi2.x402_route_audit/1.0",
+    verdict,
+    url,
+    method,
+    status_code: response.status,
+    latency_ms: Date.now() - started,
+    x402_version: challenge?.x402Version ?? null,
+    payment_options: accepts.length,
+    payment_required_header_bytes: headerBytes,
+    findings,
+    challenge_sha256: challenge ? await sha256Json(challenge) : null,
+    limitations: ["One unpaid probe only; no payment was signed, verified or settled.", "Compatibility indicators are not a guarantee of facilitator uptime or delivery quality."],
+  };
 }
 
 async function extractPublicPage(url: string, query: string | null, maxChars: number) {
