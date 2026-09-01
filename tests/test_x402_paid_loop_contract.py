@@ -149,8 +149,9 @@ class PaidLoopContractTests(unittest.TestCase):
         )
         self.assertTrue(products["agent_preflight"]["available_now"])
         self.assertTrue(products["delivery_verify"]["available_now"])
-        self.assertFalse(products["commerce_receipt"]["available_now"])
+        self.assertTrue(products["commerce_receipt"]["available_now"])
         self.assertIn("settlement", products["commerce_receipt"]["fields"])
+        self.assertEqual(products["commerce_receipt"]["issue"], "POST /v1/commerce-receipts/issue")
 
         landing = self.client.get("/buy")
         self.assertEqual(landing.status_code, 200)

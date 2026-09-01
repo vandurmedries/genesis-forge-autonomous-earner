@@ -23,6 +23,9 @@ FastAPI also exposes `GET /openapi.json` for generic API-aware agents.
 - `GET /v1/quote` — free current price/payment/execution quote.
 - `GET /v1/claim-verify/schema` — free machine-readable tool/payment schema.
 - `POST /v1/claim-verify` — x402-protected paid route; successful response contains the result.
+- `POST /v1/commerce-receipts/issue` — free canonical receipt issuance binding request and delivery hashes.
+- `POST /v1/commerce-receipts/verify` — free integrity and optional Ed25519-signature verification.
+- `GET /v1/commerce-receipts/signing-key` — public receipt-signing key metadata.
 
 Production defaults:
 
@@ -106,10 +109,27 @@ The standard capi2 marketplace rule for **routed third-party jobs** is 10% capi2
 - `CAPI2_X402_FACILITATOR` — default `https://facilitator.payai.network`.
 - `CAPI2_CLAIM_VERIFY_PRICE` — default `$0.01`.
 - `CAPI2_MAX_SOURCE_BYTES` — maximum fetched public source size; default 2,000,000 bytes.
+- `CAPI2_RECEIPT_ED25519_SEED` — optional persistent 32-byte Ed25519 private seed encoded as base64url. When absent, receipts remain portable and hash-verifiable but are explicitly marked unsigned.
+
+## Commerce receipts
+
+CAPI2 receipts keep three evidence classes separate: settlement evidence shows that
+payment moved, request and delivery hashes bind the exact exchanged payloads, and a
+verification object records the quality verdict and its evidence. None is presented as
+a substitute for the others.
+
+Receipt IDs are deterministic for the seller, request hash, delivery hash and optional
+idempotency key. Canonical JSON uses sorted keys, UTF-8 and compact separators. When a
+persistent signing seed is configured, issuance adds an Ed25519 attestation that any
+buyer can verify using the public key embedded in the receipt or exposed by the
+signing-key endpoint.
 
 ## Deployment
 
-The repository root contains `render.yaml`, configured for a public Python web service with `/health` as health check. `vercel.json` remains available as an alternate deployment target.
+`railway.json` is the primary deployment contract. Configure the service root as
+`capi2/x402_service`; Railway then installs `requirements.txt`, starts
+`uvicorn bootstrap:app --host 0.0.0.0 --port $PORT`, and checks `/health`.
+`render.yaml` and `vercel.json` remain as legacy/fallback deployment targets.
 
 ## Unpaid x402 challenge
 
