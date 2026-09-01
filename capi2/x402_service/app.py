@@ -41,7 +41,11 @@ INTEGRATION_PRICE = os.getenv("CAPI2_INTEGRATION_PRICE", "$199.00")
 UTILITY_PRICE = os.getenv("CAPI2_UTILITY_PRICE", "$0.01")
 SECURITY_PRICE = os.getenv("CAPI2_SECURITY_PRICE", "$0.02")
 ASSURANCE_REPORT_PRICE = os.getenv("CAPI2_ASSURANCE_REPORT_PRICE", "$29.00")
-PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-verify.onrender.com").rstrip("/")
+_platform_origin = os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL")
+PUBLIC_ORIGIN = os.getenv(
+    "CAPI2_CLAIM_VERIFY_ORIGIN",
+    f"https://{_platform_origin}" if _platform_origin else "https://capi2-claim-verify.onrender.com",
+).rstrip("/")
 AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "true"
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
 MAX_REDIRECTS = 3
