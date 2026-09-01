@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "capi2-agent-commerce",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "PUBLIC_ORIGIN": "https://capi2-agent-commerce.vandurmedries.workers.dev",
+    "PAY_TO": "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a",
+    "NETWORK": "eip155:8453",
+    "FACILITATOR_URL": "https://facilitator.payai.network",
+    "MIN_MARGIN_BPS": "7000"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "capi2-commerce-ledger",
+      "database_id": "329bf591-708e-439f-9d34-e1ee734d8fc8",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
