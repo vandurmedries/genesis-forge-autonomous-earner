@@ -560,6 +560,96 @@ app.get("/health", (c) => c.json({
   checked_at: new Date().toISOString(),
 }));
 
+const a2aAgentCard = (origin: string) => ({
+  protocolVersion: "0.3.0",
+  name: "CAPI2 Programmable Notary",
+  description: "Pre-action authority checks, x402 purchase safety and tamper-evident decision receipts for autonomous agents.",
+  url: `${origin}/a2a`,
+  preferredTransport: "JSONRPC",
+  additionalInterfaces: [
+    { url: `${origin}/openapi.json`, transport: "HTTP+JSON" },
+  ],
+  provider: { organization: "CAPI2", url: origin },
+  version: SERVICE_VERSION,
+  documentationUrl: `${origin}/llms.txt`,
+  capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false },
+  defaultInputModes: ["text/plain", "application/json"],
+  defaultOutputModes: ["text/plain", "application/json"],
+  skills: [
+    {
+      id: "discover-verifiable-commerce",
+      name: "Discover verifiable commerce tools",
+      description: "Return CAPI2's machine-readable catalog of paid authority, evidence and integrity checks.",
+      tags: ["x402", "agent-commerce", "verification", "notary", "guardrails"],
+      examples: ["What can CAPI2 verify?", "Show the agent commerce catalog"],
+      inputModes: ["text/plain"],
+      outputModes: ["application/json"],
+    },
+    {
+      id: "quote-agent-check",
+      name: "Quote an agent safety check",
+      description: "Return exact x402 terms for a CAPI2 product before a buyer considers payment.",
+      tags: ["quote", "x402", "USDC", "Base", "preflight"],
+      examples: ["Quote agent_action_notary", "Price tiktok_campaign_notary"],
+      inputModes: ["text/plain"],
+      outputModes: ["application/json"],
+    },
+  ],
+  supportsAuthenticatedExtendedCard: false,
+});
+
+app.get("/.well-known/agent-card.json", (c) => c.json(a2aAgentCard(c.env.PUBLIC_ORIGIN), 200, {
+  "cache-control": "public, max-age=300",
+}));
+// Compatibility alias used by a few pre-standard agent crawlers.
+app.get("/.well-known/agent.json", (c) => c.json(a2aAgentCard(c.env.PUBLIC_ORIGIN), 200, {
+  "cache-control": "public, max-age=300",
+}));
+
+app.post("/a2a", async (c) => {
+  const request = await readJson(c.req.raw);
+  const id = request.id ?? null;
+  if (request.jsonrpc !== "2.0" || request.method !== "message/send") {
+    return c.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Supported method: message/send" } }, 200);
+  }
+  const params = isRecord(request.params) ? request.params : {};
+  const message = isRecord(params.message) ? params.message : {};
+  const parts = Array.isArray(message.parts) ? message.parts : [];
+  const prompt = parts.map((part) => isRecord(part) && typeof part.text === "string" ? part.text : "").join(" ").trim();
+  const product = PRODUCTS.find((item) => prompt.toLowerCase().includes(item.id.toLowerCase()));
+  const price = product ? priceForRoute(product.path) : undefined;
+  const payload = product && price ? {
+    intent: "quote",
+    product_id: product.id,
+    buyer_job: product.buyer_job,
+    resource: `${c.env.PUBLIC_ORIGIN}${product.path}`,
+    method: product.method,
+    amount: String(price.atomic),
+    price: price.display,
+    asset: "USDC",
+    network: c.env.NETWORK,
+    recipient: c.env.PAY_TO,
+    preflight: `${c.env.PUBLIC_ORIGIN}/v1/preflight`,
+    payment_sent: false,
+  } : {
+    intent: "discovery",
+    category: "Programmable notary for autonomous agents",
+    catalog: `${c.env.PUBLIC_ORIGIN}/v1/buyer-catalog`,
+    products: PRODUCTS,
+    hint: "Send a product_id in the message to receive exact quote terms.",
+  };
+  return c.json({
+    jsonrpc: "2.0",
+    id,
+    result: {
+      kind: "message",
+      messageId: crypto.randomUUID(),
+      role: "agent",
+      parts: [{ kind: "data", data: payload }],
+    },
+  });
+});
+
 app.get("/.well-known/x402", (c) => c.json({
   version: 1,
   x402Version: 2,

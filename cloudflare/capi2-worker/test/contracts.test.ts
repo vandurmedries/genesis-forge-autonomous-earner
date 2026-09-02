@@ -34,6 +34,30 @@ describe("CAPI2 Worker contracts", () => {
     expect(await instructions.text()).toContain("Safe purchase sequence");
   });
 
+  it("publishes an A2A agent card and answers discovery and quote messages", async () => {
+    const cardResponse = await worker.fetch(new Request("https://example.test/.well-known/agent-card.json"), testEnv as Env, {} as ExecutionContext);
+    const card = await cardResponse.json<{ url: string; skills: Array<{ id: string }> }>();
+    expect(cardResponse.status).toBe(200);
+    expect(card.url).toBe("https://example.test/a2a");
+    expect(card.skills.map((skill) => skill.id)).toContain("quote-agent-check");
+
+    const quoteResponse = await worker.fetch(new Request("https://example.test/a2a", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "quote-1",
+        method: "message/send",
+        params: { message: { role: "user", messageId: "m1", parts: [{ kind: "text", text: "Quote agent_action_notary" }] } },
+      }),
+    }), testEnv as Env, {} as ExecutionContext);
+    const quote = await quoteResponse.json<{ result: { parts: Array<{ data: { product_id: string; amount: string; payment_sent: boolean } }> } }>();
+    const quoteData = quote.result.parts[0]?.data;
+    expect(quoteData?.product_id).toBe("agent_action_notary");
+    expect(quoteData?.amount).toBe("30000");
+    expect(quoteData?.payment_sent).toBe(false);
+  });
+
   it("quotes every product with an exact approval scope", async () => {
     const response = await worker.fetch(new Request("https://example.test/v1/quote?product_id=vendor_risk_pack"), testEnv as Env, {} as ExecutionContext);
     const body = await response.json<{ amount: string; resource: string; approval_scope: string[] }>();
