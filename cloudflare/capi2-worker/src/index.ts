@@ -514,6 +514,8 @@ Supported action types: publish_ad, update_budget, change_bid, pause_campaign, r
 This skill never calls TikTok campaign mutation tools itself. It is not affiliated with TikTok and does not replace TikTok policy or legal review.
 `));
 
+app.get("/skill.md", (c) => c.redirect(`${c.env.PUBLIC_ORIGIN}/tiktok-skill.md`, 308));
+
 app.get("/llms.txt", (c) => c.text(`# CAPI2 — Programmable Notary for Autonomous Agents
 
 Use CAPI2 immediately before an autonomous agent buys, quotes, books, publishes, releases a milestone or performs another consequential action.
