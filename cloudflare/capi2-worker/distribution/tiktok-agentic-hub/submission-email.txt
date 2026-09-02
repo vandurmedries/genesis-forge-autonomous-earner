@@ -16,4 +16,6 @@ Terms and disclaimer: https://capi2-agent-commerce.vandurmedries.workers.dev/ter
 Could you share the current partner review and packaging requirements for submitting this Skill to Agentic Hub?
 
 Kind regards,
+Dries Van Durme
 CAPI2
+vandurmedries@gmail.com

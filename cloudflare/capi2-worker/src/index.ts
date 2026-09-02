@@ -481,6 +481,7 @@ app.get("/privacy", (c) => c.json({
     "Cloudflare and payment infrastructure may process technical data under their own terms.",
   ],
   do_not_submit: ["private credentials", "authentication tokens", "personal data not required for the check"],
+  contact_email: "vandurmedries@gmail.com",
   contact_url: "https://capi2-agent-commerce.vandurmedries.workers.dev/",
 }));
 
@@ -494,6 +495,7 @@ app.get("/terms", (c) => c.json({
     "The buyer remains responsible for current authority data, campaign compliance and transaction-specific payment approval.",
     "Paid API access is delivered per successful x402 request; settlement alone does not prove output quality.",
   ],
+  contact_email: "vandurmedries@gmail.com",
   contact_url: "https://capi2-agent-commerce.vandurmedries.workers.dev/",
 }));
 

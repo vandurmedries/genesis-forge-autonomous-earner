@@ -15,6 +15,6 @@
   "demo_url": "https://capi2-agent-commerce.vandurmedries.workers.dev/v1/tiktok-campaign-notary/demo",
   "privacy_url": "https://capi2-agent-commerce.vandurmedries.workers.dev/privacy",
   "terms_url": "https://capi2-agent-commerce.vandurmedries.workers.dev/terms",
-  "developer_contact": "REPLACE_WITH_OWNER_EMAIL_BEFORE_SUBMISSION",
+  "developer_contact": "vandurmedries@gmail.com",
   "disclaimer": "Independent service; not affiliated with, endorsed by or approved by TikTok. Decision support only; it does not execute campaign actions."
 }
