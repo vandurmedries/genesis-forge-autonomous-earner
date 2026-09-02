@@ -24,6 +24,8 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.server import x402ResourceServer
 
+from commerce_receipts import issue_receipt, public_signing_key, verify_receipt
+
 SERVICE_VERSION = "1.16.0"
 PROTOCOL_VERSION = f"capi2.claim_verify/{SERVICE_VERSION}"
 COMMERCE_PROTOCOL = "capi2.verifiable_commerce/1.0"
@@ -39,7 +41,11 @@ INTEGRATION_PRICE = os.getenv("CAPI2_INTEGRATION_PRICE", "$199.00")
 UTILITY_PRICE = os.getenv("CAPI2_UTILITY_PRICE", "$0.01")
 SECURITY_PRICE = os.getenv("CAPI2_SECURITY_PRICE", "$0.02")
 ASSURANCE_REPORT_PRICE = os.getenv("CAPI2_ASSURANCE_REPORT_PRICE", "$29.00")
-PUBLIC_ORIGIN = os.getenv("CAPI2_CLAIM_VERIFY_ORIGIN", "https://capi2-claim-verify.onrender.com").rstrip("/")
+_platform_origin = os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL")
+PUBLIC_ORIGIN = os.getenv(
+    "CAPI2_CLAIM_VERIFY_ORIGIN",
+    f"https://{_platform_origin}" if _platform_origin else "https://capi2-claim-verify.onrender.com",
+).rstrip("/")
 AGENT402_REGISTER = os.getenv("CAPI2_AGENT402_REGISTER", "true").lower() == "true"
 MAX_SOURCE_BYTES = int(os.getenv("CAPI2_MAX_SOURCE_BYTES", "2000000"))
 MAX_REDIRECTS = 3
@@ -423,6 +429,23 @@ class PageChangeRequest(BaseModel):
 
 class ReceiptVerifyRequest(BaseModel):
     receipt: dict
+
+
+class CommerceReceiptIssueRequest(BaseModel):
+    request_id: str = Field(min_length=3, max_length=200)
+    idempotency_key: Optional[str] = Field(default=None, min_length=3, max_length=200)
+    buyer_agent: Optional[str] = Field(default=None, max_length=300)
+    seller: str = Field(min_length=3, max_length=500)
+    authority: Optional[dict] = None
+    policy_decision: Optional[dict] = None
+    price: float = Field(ge=0)
+    asset: str = Field(min_length=2, max_length=30)
+    network: str = Field(min_length=2, max_length=100)
+    request: dict
+    delivery: dict
+    verification: Optional[dict] = None
+    settlement: Optional[dict] = None
+    issued_at: Optional[str] = None
 
 
 class CommerceAssuranceRequest(BaseModel):
@@ -813,7 +836,7 @@ async def buyer_page():
 <style>
 body{margin:0;background:#081611;color:#f2f7f4;font:17px/1.55 system-ui,sans-serif}.w{max-width:1050px;margin:auto;padding:28px}nav{display:flex;justify-content:space-between;align-items:center;font-weight:800}.tag{color:#0b271b;background:#bdf45b;padding:6px 11px;border-radius:999px;font-size:13px}.hero{padding:70px 0 35px;max-width:900px}h1{font-size:clamp(48px,8vw,88px);line-height:.94;letter-spacing:-.055em;margin:0 0 24px}.hero p{font-size:21px;color:#b9cbc2;max-width:760px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}.btn,.ghost,button{padding:13px 18px;border-radius:10px;text-decoration:none;font-weight:800}.btn,button{background:#bdf45b;color:#102117;border:0;cursor:pointer}.ghost{color:#eff8f3;border:1px solid #486258}.flow{color:#bdf45b;margin:18px 0 35px;font-weight:750}.preview{margin:20px 0 45px;padding:26px;background:#0d2118;border:1px solid #355447;border-radius:18px}.preview h2{margin:0 0 6px;font-size:28px}.preview p{color:#9fb4aa}.preview form{display:grid;grid-template-columns:1fr auto;gap:10px}.preview input{min-width:0;padding:14px;border-radius:10px;border:1px solid #486258;background:#07110d;color:white;font-size:16px}.result{display:none;margin-top:18px;padding:16px;background:#07150f;border-radius:10px;white-space:pre-wrap;font:14px/1.55 ui-monospace,monospace}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:15px}.card{background:#10251c;border:1px solid #294539;border-radius:16px;padding:22px}.card b{font-size:20px}.card p{color:#aabfb5}.foot{margin-top:58px;border-top:1px solid #294539;padding:24px 0;color:#8fa69b;font-size:14px}@media(max-width:900px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:760px){.grid,.preview form{grid-template-columns:1fr}.hero{padding-top:55px}}
 </style></head><body><main class="w"><nav><span>CAPI2</span><span class="tag">x402 · Base USDC · from $0.01</span></nav>
-<section class="hero"><h1>See the risks costing your API trust and sales.</h1><p>Enter one public website or API. Get a free evidence-based preview, then buy the complete report only when the findings are useful.</p><div class="flow">Public URL → free preview → $29 payment → instant report → prioritized fixes</div></section>
+<section class="hero"><h1>See the risks costing your API trust and sales.</h1><p><strong>Verifiable commerce for autonomous agents.</strong> Enter one public website or API. Get a free evidence-based preview, then buy the complete report only when the findings are useful.</p><div class="flow">Public URL → free preview → $29 payment → instant report → prioritized fixes</div></section>
 <section class="preview"><h2>Free website & API risk preview</h2><p>No account or sales call. Public HTTPS targets only.</p><form id="previewForm"><input id="target" type="url" required placeholder="https://your-api.example"><button type="submit">Show my risks →</button></form><div class="result" id="result"></div></section>
 <section class="grid"><article class="card"><b>$29 · Complete Risk Report</b><p>TLS, security headers, API discovery, x402 readiness, combined grade and prioritized fixes. Delivered instantly as JSON plus Markdown.</p><a class="ghost" href="/docs#/reports/commerce_assurance_v1_reports_commerce_assurance_post">Buy and generate →</a></article><article class="card"><b>Built for action</b><p>No generic advice. Every detected gap becomes a concrete priority action your developer or agent can execute.</p></article><article class="card"><b>Machine + human readable</b><p>Agents receive structured JSON; teams receive a portable Markdown report for tickets, audits and client delivery.</p></article><article class="card"><b>No subscription</b><p>One target, one payment, one delivered report. Public-source observation only; no lock-in.</p></article></section>
 <script>document.getElementById('previewForm').addEventListener('submit',async function(e){e.preventDefault();var out=document.getElementById('result'),url=document.getElementById('target').value;out.style.display='block';out.textContent='Checking public discovery surfaces…';try{var r=await fetch('/v1/sales/preflight',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({target_url:url})});var d=await r.json(),checks=d.audit&&d.audit.checks||[],missing=checks.filter(function(x){return !x.present}).map(function(x){return x.name});out.textContent='Readiness score: '+(d.audit&&d.audit.readiness_score||0)+'/100\n\nDetected gaps: '+(missing.join(', ')||'none in the free discovery check')+'\n\nComplete risk report: $29\nPOST /v1/reports/commerce-assurance\nBody: '+JSON.stringify({target_url:url})+'\n\nPayment: x402 · USDC · Base. Delivery is immediate after verified payment.'}catch(err){out.textContent='The preview could not complete. Confirm this is a public HTTPS URL and retry.'}})</script>
@@ -1098,8 +1121,11 @@ async def verifiable_commerce():
                 "name": "Commerce Receipt",
                 "stage": "after_verification_and_settlement",
                 "result": "portable machine-readable evidence envelope",
-                "available_now": False,
-                "status": "contract published; signed receipt issuance is the next implementation milestone",
+                "available_now": True,
+                "status": "canonical issuance and integrity verification available; Ed25519 signatures activate when a persistent signing seed is configured",
+                "issue": "POST /v1/commerce-receipts/issue",
+                "verify": "POST /v1/commerce-receipts/verify",
+                "signing_key": "GET /v1/commerce-receipts/signing-key",
                 "fields": receipt_fields,
             },
         ],
@@ -1286,6 +1312,28 @@ def receipt_verify(payload: ReceiptVerifyRequest):
     if isinstance(settlement, dict) and not any(settlement.get(key) for key in ["transaction", "transaction_hash", "evidence_url"]): warnings.append("settlement_evidence_missing")
     valid = not missing and not warnings
     return {"protocol": "capi2.receipt_verify/1.0", "valid": valid, "verification_scope": "structural consistency only; on-chain settlement is not independently fetched", "missing": missing, "warnings": warnings, "receipt_id": receipt.get("receipt_id"), "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+@app.post("/v1/commerce-receipts/issue", tags=["agent commerce", "receipts", "free"])
+def commerce_receipt_issue(payload: CommerceReceiptIssueRequest):
+    """Issue a portable receipt that binds request and delivery payloads."""
+    return issue_receipt(payload.model_dump(exclude_none=True))
+
+
+@app.post("/v1/commerce-receipts/verify", tags=["agent commerce", "receipts", "free"])
+def commerce_receipt_verify(payload: ReceiptVerifyRequest):
+    """Verify receipt integrity and its optional Ed25519 attestation."""
+    result = verify_receipt(payload.receipt)
+    result["checked_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return result
+
+
+@app.get("/v1/commerce-receipts/signing-key", tags=["agent commerce", "receipts", "free"])
+def commerce_receipt_signing_key():
+    return {
+        "protocol": "capi2.commerce_receipt_key/1.0",
+        **public_signing_key(),
+    }
 
 
 @app.post("/v1/reports/commerce-assurance", tags=["reports", "paid"])

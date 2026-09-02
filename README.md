@@ -1,5 +1,13 @@
 # genesis-forge-autonomous-earner
 The first autonomous money invention engine - creates brand new digital products 24/7
+
+## CAPI2 production
+
+The sustainable CAPI2 x402 API runs on Cloudflare Workers with a D1 commerce
+ledger: <https://capi2-agent-commerce.vandurmedries.workers.dev>. The previous
+Vercel deployment is retained only as a rollback reference. Cloudflare source,
+migrations and operating instructions live in `cloudflare/capi2-worker/`.
+
 # capi2 revenue operations
 
 `capi2-demand-tools` emits a `capi2.x402.settled` event only from the native

@@ -1,0 +1,20 @@
+{
+  "name": "capi2-campaign-action-notary",
+  "version": "1.0.0",
+  "company": "CAPI2",
+  "category": ["Ads Management", "Measurement", "Data Insights"],
+  "industries": ["Commerce & Retail", "Finance", "Professional Services", "Real Estate", "Tech & Software"],
+  "short_description": "Block unauthorized ad publications, bid changes and budget increases before an AI agent executes them.",
+  "detailed_description": "An independent pre-action guardrail for TikTok advertising agents. It checks advertiser authority, campaign action allow-lists, currency and spending ceilings, hashed approval evidence, prohibited claim terms and public destination support. It returns allow, manual_review or block and can issue a tamper-evident decision receipt without executing the campaign mutation.",
+  "showcase_prompts": [
+    "Can this agent raise campaign cmp_456 to EUR 5,000 per day under the current advertiser authority?",
+    "Check this ad claim against its landing page before I publish it.",
+    "Create a verifiable approval receipt before this agent changes a TikTok campaign bid."
+  ],
+  "skill_url": "https://capi2-agent-commerce.vandurmedries.workers.dev/tiktok-skill.md",
+  "demo_url": "https://capi2-agent-commerce.vandurmedries.workers.dev/v1/tiktok-campaign-notary/demo",
+  "privacy_url": "https://capi2-agent-commerce.vandurmedries.workers.dev/privacy",
+  "terms_url": "https://capi2-agent-commerce.vandurmedries.workers.dev/terms",
+  "developer_contact": "vandurmedries@gmail.com",
+  "disclaimer": "Independent service; not affiliated with, endorsed by or approved by TikTok. Decision support only; it does not execute campaign actions."
+}

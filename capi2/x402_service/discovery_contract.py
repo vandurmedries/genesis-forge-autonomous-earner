@@ -108,6 +108,64 @@ def _paid_operation(path: str, intent: dict) -> dict:
 def build_openapi() -> dict:
     paths: dict[str, dict] = {
         "/v1/claim-verify": {"post": _paid_operation("/v1/claim-verify", _GENERIC_INTENT)},
+        "/v1/commerce-receipts/issue": {
+            "post": {
+                "operationId": "issue_commerce_receipt",
+                "summary": "Bind an agent purchase request and delivery into a portable receipt",
+                "tags": ["commerce receipts", "agent commerce"],
+                "x-payment-info": {"required": False},
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["request_id", "seller", "price", "asset", "network", "request", "delivery"],
+                                "properties": {
+                                    "request_id": {"type": "string"},
+                                    "idempotency_key": {"type": "string"},
+                                    "buyer_agent": {"type": "string"},
+                                    "seller": {"type": "string"},
+                                    "authority": {"type": "object"},
+                                    "policy_decision": {"type": "object"},
+                                    "price": {"type": "number", "minimum": 0},
+                                    "asset": {"type": "string"},
+                                    "network": {"type": "string"},
+                                    "request": {"type": "object"},
+                                    "delivery": {"type": "object"},
+                                    "verification": {"type": "object"},
+                                    "settlement": {"type": "object"},
+                                    "issued_at": {"type": "string", "format": "date-time"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {"200": {"description": "Canonical commerce receipt"}},
+            }
+        },
+        "/v1/commerce-receipts/verify": {
+            "post": {
+                "operationId": "verify_commerce_receipt",
+                "summary": "Verify commerce receipt hashes and optional Ed25519 signature",
+                "tags": ["commerce receipts", "agent commerce"],
+                "x-payment-info": {"required": False},
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": {"type": "object", "required": ["receipt"], "properties": {"receipt": {"type": "object"}}}}},
+                },
+                "responses": {"200": {"description": "Receipt integrity verdict"}},
+            }
+        },
+        "/v1/commerce-receipts/signing-key": {
+            "get": {
+                "operationId": "get_commerce_receipt_signing_key",
+                "summary": "Get the active Ed25519 receipt-verification key",
+                "tags": ["commerce receipts", "agent commerce"],
+                "x-payment-info": {"required": False},
+                "responses": {"200": {"description": "Public signing-key metadata"}},
+            }
+        },
     }
     for path, intent in SALES_INTENTS.items():
         paths[path] = {"post": _paid_operation(path, intent)}
