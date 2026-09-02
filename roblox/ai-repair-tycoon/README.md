@@ -19,3 +19,7 @@ A small Roblox MVP: repair broken AI units, earn credits, buy efficiency upgrade
 6. Enable Studio access to API services only in a test universe, test receipts, then publish.
 
 Purchases are deliberately disabled in this prototype. Persistence and Developer Products should only be activated after publication to a test universe, configuration of real product IDs, and successful receipt-flow tests.
+
+## Private-test analytics
+
+The `FirstSession` funnel records four successful milestones: `Joined`, `First Repair`, `Five Repairs`, and `First Upgrade`. Roblox funnel charts can take about 24 hours to populate; recent events can be inspected sooner with **View Events** in Creator Dashboard → Analytics → Funnels.
