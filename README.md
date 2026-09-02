@@ -1,16 +1,30 @@
 # genesis-forge-autonomous-earner
-The first autonomous money invention engine - creates brand new digital products 24/7
-# capi2 revenue operations
 
-`capi2-demand-tools` emits a `capi2.x402.settled` event only from the native
-x402 `after_settle` hook. Configure any of these optional destinations:
+Machine-readable CAPI2 tools and digital products for autonomous agents.
 
-- `CAPI2_LAGO_WEBHOOK_URL` — usage/billing ingestion bridge
-- `CAPI2_TRIGGER_WEBHOOK_URL` — recurring jobs and follow-up workflows
-- `CAPI2_CRM_WEBHOOK_URL` — Relaticle or another MCP-capable CRM bridge
-- `CAPI2_REVENUE_WEBHOOK_SECRET` — shared HMAC-SHA256 signing secret
+## Website Buyer Signal Scanner
 
-Every delivery includes an `Idempotency-Key` and `X-Capi2-Signature`. Buyer
-wallets are represented by a one-way hashed `payer_ref`; raw wallet addresses
-are not forwarded. Integration failures are logged and never alter x402
-verification, settlement, or the paid API response.
+Turn up to 100 company websites per run into structured prospect intelligence:
+
+- detected CMS, ecommerce, analytics, advertising and infrastructure technology;
+- publicly displayed business contacts and social profiles;
+- explainable buyer signals such as missing analytics, weak security headers or absent conversion tools;
+- stable dataset items for CRM and agent workflows.
+
+**Launch price:** $0.0009 per successful website result ($0.90 per 1,000). Failed scans do not create a billed dataset item.
+
+[Open the Actor on Apify](https://apify.com/capi2/my-actor-1)
+
+### Use from an AI agent
+
+Agents can discover the Actor through Apify's MCP server:
+
+```text
+https://mcp.apify.com?tools=capi2/my-actor-1
+```
+
+The reusable agent instructions are in [products/website-buyer-signal-scanner/SKILL.md](products/website-buyer-signal-scanner/SKILL.md).
+
+## Responsible use
+
+The scanner reads public homepage HTML and response headers. It does not bypass logins or CAPTCHAs and is not intended for private-person enrichment or automated spam. Treat detected technologies and opportunities as reviewable signals rather than certified facts.
