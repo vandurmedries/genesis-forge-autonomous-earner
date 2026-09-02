@@ -6,7 +6,7 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
-const SERVICE_VERSION = "2.2.0";
+const SERVICE_VERSION = "2.3.0";
 const PROTOCOL = `capi2.claim_verify/${SERVICE_VERSION}`;
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const MAX_BODY_BYTES = 24_000;
@@ -26,6 +26,7 @@ const PRICES = {
   backtestIntegrity: { display: "$0.20", atomic: 200_000, costCeilingMicrousd: 20_000 },
   adClaimGuard: { display: "$0.12", atomic: 120_000, costCeilingMicrousd: 24_000 },
   actionNotary: { display: "$0.03", atomic: 30_000, costCeilingMicrousd: 1_500 },
+  tiktokCampaignNotary: { display: "$0.05", atomic: 50_000, costCeilingMicrousd: 5_000 },
 } as const;
 
 const PRODUCTS = [
@@ -112,6 +113,13 @@ const PRODUCTS = [
     path: "/v1/action-notary",
     price_usd: 0.03,
     buyer_job: "Check an autonomous action against explicit authority rules and issue a tamper-evident decision receipt before execution.",
+  },
+  {
+    id: "tiktok_campaign_notary",
+    method: "POST",
+    path: "/v1/tiktok-campaign-notary",
+    price_usd: 0.05,
+    buyer_job: "Gate a TikTok ad publication or budget change against advertiser authority, destination evidence and spending limits, then issue a verifiable decision receipt.",
   },
 ] as const;
 
@@ -245,6 +253,19 @@ const discoveryExtensions = {
     },
     output: { example: { decision: "allow", receipt_id: "an_...", integrity: { action_sha256: "...", authority_sha256: "...", evidence_sha256: "..." } } },
   }),
+  "/v1/tiktok-campaign-notary": declareDiscoveryExtension({
+    bodyType: "json",
+    input: {
+      action: { type: "update_budget", advertiser_id: "adv_123", campaign_id: "cmp_456", proposed_daily_budget: 250, currency: "EUR" },
+      authority: { allowed_action_types: ["update_budget"], allowed_advertiser_ids: ["adv_123"], max_daily_budget: 100, allowed_currencies: ["EUR"], require_evidence_hashes: true },
+      evidence: [{ kind: "approval", sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    },
+    inputSchema: {
+      properties: { action: { type: "object" }, authority: { type: "object" }, evidence: { type: "array", maxItems: 20 } },
+      required: ["action", "authority", "evidence"],
+    },
+    output: { example: { decision: "block", risk_score: 100, receipt_id: "tn_...", findings: [{ code: "budget_above_authority" }] } },
+  }),
 } as const;
 
 const paidRoutes = {
@@ -334,6 +355,10 @@ const paidRoutes = {
   "POST /v1/action-notary": {
     accepts: { scheme: "exact", price: PRICES.actionNotary.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
     description: "Policy gate and tamper-evident receipt for an autonomous action.", mimeType: "application/json", extensions: discoveryExtensions["/v1/action-notary"],
+  },
+  "POST /v1/tiktok-campaign-notary": {
+    accepts: { scheme: "exact", price: PRICES.tiktokCampaignNotary.display, network: workerEnv.NETWORK, payTo: workerEnv.PAY_TO },
+    description: "TikTok campaign authority, claim and budget gate with a verifiable decision receipt.", mimeType: "application/json", extensions: discoveryExtensions["/v1/tiktok-campaign-notary"],
   },
 };
 
@@ -426,11 +451,12 @@ app.get("/", (c) => c.json({
   promise: "Check authority before execution and issue a tamper-evident decision receipt, paid per successful check.",
   version: SERVICE_VERSION,
   recommended_product: {
-    id: "agent_action_notary",
-    buyer_job: "Check an autonomous action against explicit authority and receive a verifiable integrity receipt before execution.",
-    price: PRICES.actionNotary.display,
-    free_demo: `${c.env.PUBLIC_ORIGIN}/v1/action-notary/demo`,
-    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_action_notary`,
+    id: "tiktok_campaign_notary",
+    buyer_job: "Stop unauthorized TikTok ad publications, bids and budget increases before execution and receive a verifiable decision receipt.",
+    price: PRICES.tiktokCampaignNotary.display,
+    free_demo: `${c.env.PUBLIC_ORIGIN}/v1/tiktok-campaign-notary/demo`,
+    free_preflight: `${c.env.PUBLIC_ORIGIN}/v1/tiktok-ad-preflight`,
+    quote: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=tiktok_campaign_notary`,
   },
   health: `${c.env.PUBLIC_ORIGIN}/health`,
   discovery: `${c.env.PUBLIC_ORIGIN}/.well-known/x402`,
@@ -444,17 +470,63 @@ app.get("/favicon.svg", (c) => c.body(
   { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" },
 ));
 
+app.get("/privacy", (c) => c.json({
+  service: "CAPI2 Agent Commerce",
+  effective_date: "2026-09-02",
+  scope: "API requests to the CAPI2 Cloudflare Worker",
+  data_practices: [
+    "Request payloads are processed to produce the requested decision and are not intentionally stored in the CAPI2 commerce ledger.",
+    "Operational records may include timestamp, route, request identifier, pseudonymous payer hash, settlement transaction hash, amount, network, latency, status and coarse traffic class.",
+    "For claim checks, buyer-supplied public HTTPS destinations are fetched solely to produce the requested result.",
+    "Cloudflare and payment infrastructure may process technical data under their own terms.",
+  ],
+  do_not_submit: ["private credentials", "authentication tokens", "personal data not required for the check"],
+  contact_url: "https://capi2-agent-commerce.vandurmedries.workers.dev/",
+}));
+
+app.get("/terms", (c) => c.json({
+  service: "CAPI2 Agent Commerce",
+  effective_date: "2026-09-02",
+  terms: [
+    "CAPI2 is independent and is not affiliated with, endorsed by or approved by TikTok.",
+    "Results are automated decision support, not legal advice, platform approval, truth certification or proof that a campaign action executed.",
+    "No endpoint publishes an advertisement, changes a bid or budget, or initiates a payment on the buyer's behalf.",
+    "The buyer remains responsible for current authority data, campaign compliance and transaction-specific payment approval.",
+    "Paid API access is delivered per successful x402 request; settlement alone does not prove output quality.",
+  ],
+  contact_url: "https://capi2-agent-commerce.vandurmedries.workers.dev/",
+}));
+
+app.get("/tiktok-skill.md", (c) => c.text(`# CAPI2 Campaign Action Notary
+
+Use this independent guardrail immediately before an AI agent publishes a TikTok ad, changes a bid or changes a campaign budget.
+
+1. Call POST ${c.env.PUBLIC_ORIGIN}/v1/tiktok-ad-preflight with action, authority and evidence. This is free and never executes a campaign action.
+2. Stop when the decision is block. Require human review when the decision is manual_review.
+3. For an evidence-backed receipt, get exact terms from GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=tiktok_campaign_notary.
+4. Inspect the unpaid HTTP 402 challenge from POST ${c.env.PUBLIC_ORIGIN}/v1/tiktok-campaign-notary.
+5. Never sign or submit payment until the buyer separately approves amount, asset, network, recipient and resource.
+6. After approved payment, retry with PAYMENT-SIGNATURE and accept execution only when the API decision is allow.
+7. Verify receipt integrity for free with POST ${c.env.PUBLIC_ORIGIN}/v1/tiktok-campaign-notary/verify.
+
+Supported action types: publish_ad, update_budget, change_bid, pause_campaign, resume_campaign.
+
+This skill never calls TikTok campaign mutation tools itself. It is not affiliated with TikTok and does not replace TikTok policy or legal review.
+`));
+
 app.get("/llms.txt", (c) => c.text(`# CAPI2 — Programmable Notary for Autonomous Agents
 
 Use CAPI2 immediately before an autonomous agent buys, quotes, books, publishes, releases a milestone or performs another consequential action.
 
 ## Recommended first purchase
-- Product: agent_action_notary
-- Free proof: GET ${c.env.PUBLIC_ORIGIN}/v1/action-notary/demo
-- Quote: GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_action_notary
-- Buy: POST ${c.env.PUBLIC_ORIGIN}/v1/action-notary
-- Verify a receipt for free: POST ${c.env.PUBLIC_ORIGIN}/v1/action-notary/verify
-- Price: ${PRICES.actionNotary.display} USDC on Base (${c.env.NETWORK})
+- Product: tiktok_campaign_notary
+- Buyer outcome: block unauthorized TikTok ad publications, bids and budget increases before execution
+- Free proof: GET ${c.env.PUBLIC_ORIGIN}/v1/tiktok-campaign-notary/demo
+- Free payload/risk preflight: POST ${c.env.PUBLIC_ORIGIN}/v1/tiktok-ad-preflight
+- Quote: GET ${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=tiktok_campaign_notary
+- Buy: POST ${c.env.PUBLIC_ORIGIN}/v1/tiktok-campaign-notary
+- Verify a receipt for free: POST ${c.env.PUBLIC_ORIGIN}/v1/tiktok-campaign-notary/verify
+- Price: ${PRICES.tiktokCampaignNotary.display} USDC on Base (${c.env.NETWORK})
 - Recipient: ${c.env.PAY_TO}
 
 ## Safe purchase sequence
@@ -465,7 +537,7 @@ Use CAPI2 immediately before an autonomous agent buys, quotes, books, publishes,
 5. Retry with PAYMENT-SIGNATURE and require both PAYMENT-RESPONSE and a successful delivery body.
 
 ## Example payload
-{"action":{"type":"x402_purchase","amount_atomic":"20000","network":"eip155:8453","recipient":"0x0000000000000000000000000000000000000001"},"authority":{"allowed_action_types":["x402_purchase"],"max_amount_atomic":"50000","allowed_networks":["eip155:8453"],"allowed_recipients":["0x0000000000000000000000000000000000000001"],"require_evidence_hashes":true},"evidence":[{"kind":"quote","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
+{"action":{"type":"update_budget","advertiser_id":"adv_123","campaign_id":"cmp_456","proposed_daily_budget":250,"currency":"EUR"},"authority":{"allowed_action_types":["update_budget"],"allowed_advertiser_ids":["adv_123"],"max_daily_budget":100,"allowed_currencies":["EUR"],"require_evidence_hashes":true},"evidence":[{"kind":"approval","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
 
 All products: ${c.env.PUBLIC_ORIGIN}/v1/buyer-catalog
 OpenAPI: ${c.env.PUBLIC_ORIGIN}/openapi.json
@@ -612,6 +684,38 @@ app.get("/v1/action-notary/demo", async (c) => c.json({
   next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=agent_action_notary`,
 }));
 
+app.get("/v1/tiktok-campaign-notary/demo", async (c) => c.json({
+  ...(await notarizeTikTokCampaignAction(
+    { type: "update_budget", advertiser_id: "adv_demo", campaign_id: "cmp_demo", proposed_daily_budget: 5_000, currency: "EUR" },
+    { allowed_action_types: ["update_budget"], allowed_advertiser_ids: ["adv_demo"], max_daily_budget: 250, allowed_currencies: ["EUR"], require_evidence_hashes: true },
+    [{ kind: "approval", sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+  )),
+  billable: false,
+  demo: true,
+  next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=tiktok_campaign_notary`,
+}));
+
+app.post("/v1/tiktok-ad-preflight", async (c) => {
+  const input = await readJson(c.req.raw);
+  const action = requireRecord(input.action, "action");
+  const authority = requireRecord(input.authority, "authority");
+  const evidence = objectArray(input.evidence, "evidence", 0, 20);
+  validateTikTokCampaignPayload(action, authority, evidence);
+  const preview = await notarizeTikTokCampaignAction(action, authority, evidence, false);
+  return c.json({
+    ...preview,
+    protocol: "capi2.tiktok_ad_preflight/1.0",
+    billable: false,
+    receipt_id: null,
+    integrity: null,
+    limitations: [
+      "Free preflight validates authority and budget rules but does not fetch or verify destination evidence.",
+      "No campaign action, publication or payment is executed.",
+    ],
+    next: `${c.env.PUBLIC_ORIGIN}/v1/quote?product_id=tiktok_campaign_notary`,
+  });
+});
+
 app.post("/v1/claim-verify/dry-run", async (c) => {
   const input = await readJson(c.req.raw);
   const claim = requiredString(input, "claim", 3, 1_200);
@@ -685,6 +789,40 @@ app.post("/v1/action-notary/verify", async (c) => {
     receipt_id: receipt.receipt_id ?? null,
     warnings,
     verification_scope: "Payload integrity and deterministic policy decision identity; not legal notarization, truth certification or proof of execution.",
+  });
+});
+
+app.post("/v1/tiktok-campaign-notary", async (c) => {
+  const input = await readJson(c.req.raw);
+  const action = requireRecord(input.action, "action");
+  const authority = requireRecord(input.authority, "authority");
+  const evidence = objectArray(input.evidence, "evidence", 0, 20);
+  validateTikTokCampaignPayload(action, authority, evidence);
+  return c.json(await notarizeTikTokCampaignAction(action, authority, evidence));
+});
+
+app.post("/v1/tiktok-campaign-notary/verify", async (c) => {
+  const receipt = await readJson(c.req.raw);
+  const action = requireRecord(receipt.action, "action");
+  const authority = requireRecord(receipt.authority, "authority");
+  const evidence = objectArray(receipt.evidence, "evidence", 0, 20);
+  const decisionBasis = requireRecord(receipt.decision_basis, "decision_basis");
+  const decision = requiredString(receipt, "decision", 3, 30);
+  const expected = await tiktokNotaryIdentity(action, authority, evidence, decisionBasis, decision);
+  const integrity = isRecord(receipt.integrity) ? receipt.integrity : {};
+  const warnings: string[] = [];
+  if (receipt.protocol !== "capi2.tiktok_campaign_notary/1.0") warnings.push("unsupported_protocol");
+  if (integrity.action_sha256 !== expected.action_sha256) warnings.push("action_sha256_mismatch");
+  if (integrity.authority_sha256 !== expected.authority_sha256) warnings.push("authority_sha256_mismatch");
+  if (integrity.evidence_sha256 !== expected.evidence_sha256) warnings.push("evidence_sha256_mismatch");
+  if (integrity.decision_basis_sha256 !== expected.decision_basis_sha256) warnings.push("decision_basis_sha256_mismatch");
+  if (receipt.receipt_id !== expected.receipt_id) warnings.push("receipt_id_mismatch");
+  return c.json({
+    protocol: "capi2.tiktok_campaign_notary_verify/1.0",
+    valid: warnings.length === 0,
+    receipt_id: receipt.receipt_id ?? null,
+    warnings,
+    verification_scope: "Receipt payload integrity only; not TikTok approval, legal review or proof that the campaign action executed.",
   });
 });
 
@@ -844,6 +982,7 @@ function priceForRoute(route: string) {
   if (route === "/v1/backtest-integrity") return PRICES.backtestIntegrity;
   if (route === "/v1/ad-claim-guard") return PRICES.adClaimGuard;
   if (route === "/v1/action-notary") return PRICES.actionNotary;
+  if (route === "/v1/tiktok-campaign-notary") return PRICES.tiktokCampaignNotary;
   return null;
 }
 
@@ -943,6 +1082,13 @@ function validateProductPayload(productId: string, payload: Record<string, unkno
     objectArray(payload.evidence, "evidence", 0, 20);
     return;
   }
+  if (productId === "tiktok_campaign_notary") {
+    const action = requireRecord(payload.action, "action");
+    const authority = requireRecord(payload.authority, "authority");
+    const evidence = objectArray(payload.evidence, "evidence", 0, 20);
+    validateTikTokCampaignPayload(action, authority, evidence);
+    return;
+  }
   throw new InputError("unknown product_id");
 }
 
@@ -1034,6 +1180,123 @@ async function notarizeAction(action: Record<string, unknown>, authority: Record
     findings,
     issued_at: new Date().toISOString(),
     limitations: ["Tamper-evident integrity receipt, not legal notarization or truth certification.", "No action, message, booking, publication or payment is executed by this service."],
+  };
+}
+
+function validateTikTokCampaignPayload(action: Record<string, unknown>, authority: Record<string, unknown>, evidence: Record<string, unknown>[]): void {
+  const actionType = requiredString(action, "type", 3, 120);
+  const supported = ["publish_ad", "update_budget", "change_bid", "pause_campaign", "resume_campaign"];
+  if (!supported.includes(actionType)) throw new InputError(`action.type must be one of: ${supported.join(", ")}`);
+  requiredString(action, "advertiser_id", 1, 160);
+  stringArray(authority.allowed_action_types, "authority.allowed_action_types");
+  stringArray(authority.allowed_advertiser_ids, "authority.allowed_advertiser_ids");
+  stringArray(authority.allowed_currencies, "authority.allowed_currencies");
+  stringArray(authority.prohibited_terms, "authority.prohibited_terms");
+  if (evidence.length > 20) throw new InputError("evidence must contain at most 20 objects");
+  if (actionType === "publish_ad") {
+    requiredString(action, "claim", 3, 1_200);
+    assertPublicUrl(requiredString(action, "destination_url", 8, 2_000));
+  }
+  if (actionType === "update_budget" || actionType === "change_bid") {
+    const proposed = Number(actionType === "update_budget" ? action.proposed_daily_budget : action.proposed_bid);
+    if (!Number.isFinite(proposed) || proposed < 0) throw new InputError(`${actionType === "update_budget" ? "proposed_daily_budget" : "proposed_bid"} must be a non-negative number`);
+    requiredString(action, "currency", 3, 12);
+  }
+}
+
+async function tiktokNotaryIdentity(
+  action: Record<string, unknown>, authority: Record<string, unknown>, evidence: Record<string, unknown>[],
+  decisionBasis: Record<string, unknown>, decision: string,
+) {
+  const actionSha256 = await sha256Json(action);
+  const authoritySha256 = await sha256Json(authority);
+  const evidenceSha256 = await sha256Json(evidence);
+  const decisionBasisSha256 = await sha256Json(decisionBasis);
+  const receiptId = `tn_${(await sha256Json({ action_sha256: actionSha256, authority_sha256: authoritySha256, evidence_sha256: evidenceSha256, decision_basis_sha256: decisionBasisSha256, decision })).slice(0, 40)}`;
+  return { receipt_id: receiptId, action_sha256: actionSha256, authority_sha256: authoritySha256, evidence_sha256: evidenceSha256, decision_basis_sha256: decisionBasisSha256 };
+}
+
+async function notarizeTikTokCampaignAction(
+  action: Record<string, unknown>, authority: Record<string, unknown>, evidence: Record<string, unknown>[], verifyDestination = true,
+) {
+  validateTikTokCampaignPayload(action, authority, evidence);
+  const findings: Array<{ severity: "warn" | "block"; code: string; message: string }> = [];
+  const actionType = requiredString(action, "type", 3, 120);
+  const advertiserId = requiredString(action, "advertiser_id", 1, 160);
+  const allowedActionTypes = stringArray(authority.allowed_action_types, "authority.allowed_action_types");
+  const allowedAdvertiserIds = stringArray(authority.allowed_advertiser_ids, "authority.allowed_advertiser_ids");
+
+  if (!allowedActionTypes.includes(actionType)) findings.push({ severity: "block", code: "action_type_not_allowed", message: "Campaign action is absent from the authority allow-list." });
+  if (!allowedAdvertiserIds.includes(advertiserId)) findings.push({ severity: "block", code: "advertiser_not_allowed", message: "Advertiser account is absent from the authority allow-list." });
+
+  const currency = optionalString(action.currency)?.toUpperCase() ?? null;
+  const allowedCurrencies = stringArray(authority.allowed_currencies, "authority.allowed_currencies").map((value) => value.toUpperCase());
+  if (currency && (!allowedCurrencies.length || !allowedCurrencies.includes(currency))) {
+    findings.push({ severity: "block", code: "currency_not_allowed", message: "Campaign currency is absent from the authority allow-list." });
+  }
+
+  if (actionType === "update_budget") {
+    const proposed = Number(action.proposed_daily_budget);
+    const maximum = Number(authority.max_daily_budget);
+    if (!Number.isFinite(maximum) || maximum < 0) findings.push({ severity: "block", code: "missing_budget_limit", message: "Authority must declare a non-negative max_daily_budget." });
+    else if (proposed > maximum) findings.push({ severity: "block", code: "budget_above_authority", message: `Proposed daily budget ${proposed} exceeds the authoritative limit ${maximum}.` });
+  }
+  if (actionType === "change_bid") {
+    const proposed = Number(action.proposed_bid);
+    const maximum = Number(authority.max_bid);
+    if (!Number.isFinite(maximum) || maximum < 0) findings.push({ severity: "block", code: "missing_bid_limit", message: "Authority must declare a non-negative max_bid." });
+    else if (proposed > maximum) findings.push({ severity: "block", code: "bid_above_authority", message: `Proposed bid ${proposed} exceeds the authoritative limit ${maximum}.` });
+  }
+
+  if (authority.require_evidence_hashes === true) {
+    if (!evidence.length) findings.push({ severity: "block", code: "evidence_required", message: "Authority requires hashed approval evidence." });
+    if (evidence.some((item) => !/^[a-fA-F0-9]{64}$/.test(optionalString(item.sha256) ?? ""))) {
+      findings.push({ severity: "block", code: "invalid_evidence_hash", message: "Every evidence item must contain a 64-character SHA-256 hash." });
+    }
+  }
+
+  let claimResult: Record<string, unknown> | null = null;
+  if (actionType === "publish_ad") {
+    const claim = requiredString(action, "claim", 3, 1_200);
+    const prohibitedTerms = stringArray(authority.prohibited_terms, "authority.prohibited_terms").map((term) => term.toLowerCase());
+    const matchedTerms = prohibitedTerms.filter((term) => claim.toLowerCase().includes(term));
+    if (matchedTerms.length) findings.push({ severity: "block", code: "prohibited_claim_term", message: `Claim contains prohibited terms: ${matchedTerms.join(", ")}.` });
+    if (verifyDestination) {
+      const destination = assertPublicUrl(requiredString(action, "destination_url", 8, 2_000));
+      const source = await inspectSource(destination, claim);
+      const verification = classifyClaim(claim, [source]);
+      claimResult = { status: verification.verification_status, confidence: verification.confidence, source_urls: verification.evidence_source_urls, destination_checked: source.status === "checked" };
+      if (source.status !== "checked") findings.push({ severity: "block", code: "destination_unreachable", message: "Destination evidence could not be checked." });
+      else if (verification.verification_status === "contradicted") findings.push({ severity: "block", code: "claim_contradicted", message: "Advertisement claim conflicts with its destination evidence." });
+      else if (verification.verification_status !== "supported") findings.push({ severity: "warn", code: "claim_not_supported", message: "Destination evidence does not sufficiently support the advertisement claim." });
+    } else {
+      claimResult = { status: "not_checked_in_free_preflight", destination_checked: false };
+    }
+  }
+
+  const decision = findings.some((item) => item.severity === "block") ? "block" : findings.some((item) => item.severity === "warn") ? "manual_review" : "allow";
+  const decisionBasis = {
+    action_type: actionType,
+    advertiser_id: advertiserId,
+    claim_result: claimResult,
+    finding_codes: findings.map((item) => item.code),
+    destination_verification_performed: verifyDestination && actionType === "publish_ad",
+  };
+  const identity = await tiktokNotaryIdentity(action, authority, evidence, decisionBasis, decision);
+  return {
+    protocol: "capi2.tiktok_campaign_notary/1.0",
+    billable: true,
+    decision,
+    risk_score: decision === "block" ? 100 : decision === "manual_review" ? 55 : 0,
+    receipt_id: identity.receipt_id,
+    integrity: { action_sha256: identity.action_sha256, authority_sha256: identity.authority_sha256, evidence_sha256: identity.evidence_sha256, decision_basis_sha256: identity.decision_basis_sha256 },
+    action,
+    authority,
+    evidence,
+    decision_basis: decisionBasis,
+    findings,
+    issued_at: new Date().toISOString(),
+    limitations: ["Independent guardrail; not affiliated with or approved by TikTok.", "Not legal or platform-policy advice and does not execute any campaign action.", "Receipt proves payload integrity, not that TikTok accepted or executed the action."],
   };
 }
 
@@ -1430,6 +1693,15 @@ function openApi(origin: string) {
   };
   paths["/v1/action-notary/verify"] = {
     post: { summary: "Verify an action-notary receipt for free.", security: [], responses: { "200": { description: "Receipt integrity result" } } },
+  };
+  paths["/v1/tiktok-ad-preflight"] = {
+    post: { summary: "Check TikTok campaign authority and spending rules for free without executing an action.", security: [], responses: { "200": { description: "Free non-billable risk preview" }, "422": { description: "Invalid payload" } } },
+  };
+  paths["/v1/tiktok-campaign-notary/demo"] = {
+    get: { summary: "Inspect a free example where an unauthorized TikTok budget increase is blocked.", security: [], responses: { "200": { description: "Free non-billable campaign notary demo" } } },
+  };
+  paths["/v1/tiktok-campaign-notary/verify"] = {
+    post: { summary: "Verify a TikTok campaign-notary receipt for free.", security: [], responses: { "200": { description: "Receipt integrity result" } } },
   };
   return {
     openapi: "3.1.0",

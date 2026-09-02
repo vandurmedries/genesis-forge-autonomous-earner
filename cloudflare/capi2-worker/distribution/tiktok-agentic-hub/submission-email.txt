@@ -1,0 +1,19 @@
+To: tiktok-ads-mcp-agentic-hub@tiktok.com
+Subject: Third-party AI Skill submission — CAPI2 Campaign Action Notary
+
+Hello TikTok for Business Agentic Hub team,
+
+We would like to submit CAPI2 Campaign Action Notary as a third-party AI Skill.
+
+The Skill is an independent pre-action guardrail for advertising agents. Immediately before an agent publishes an ad or changes a campaign budget or bid, it checks advertiser authority, spending ceilings, evidence hashes, prohibited claim terms and landing-page support. It returns allow, manual_review or block and can issue a tamper-evident decision receipt. It never executes a TikTok campaign mutation itself.
+
+Skill: https://capi2-agent-commerce.vandurmedries.workers.dev/tiktok-skill.md
+Free demo: https://capi2-agent-commerce.vandurmedries.workers.dev/v1/tiktok-campaign-notary/demo
+API discovery: https://capi2-agent-commerce.vandurmedries.workers.dev/.well-known/x402
+Privacy: https://capi2-agent-commerce.vandurmedries.workers.dev/privacy
+Terms and disclaimer: https://capi2-agent-commerce.vandurmedries.workers.dev/terms
+
+Could you share the current partner review and packaging requirements for submitting this Skill to Agentic Hub?
+
+Kind regards,
+CAPI2

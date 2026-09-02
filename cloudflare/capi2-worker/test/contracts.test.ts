@@ -22,14 +22,14 @@ describe("CAPI2 Worker contracts", () => {
   it("publishes all paid resources", async () => {
     const response = await worker.fetch(new Request("https://example.test/v1/buyer-catalog"), testEnv as Env, {} as ExecutionContext);
     const body = await response.json<{ resources: Array<{ price_usd: number }> }>();
-    expect(body.resources.map((item) => item.price_usd)).toEqual([0.008, 0.015, 0.005, 0.005, 0.1, 0.25, 0.01, 0.02, 0.15, 0.2, 0.12, 0.03]);
+    expect(body.resources.map((item) => item.price_usd)).toEqual([0.008, 0.015, 0.005, 0.005, 0.1, 0.25, 0.01, 0.02, 0.15, 0.2, 0.12, 0.03, 0.05]);
   });
 
   it("focuses the landing response and publishes agent purchase instructions", async () => {
     const landing = await worker.fetch(new Request("https://example.test/"), testEnv as Env, {} as ExecutionContext);
     const landingBody = await landing.json<{ recommended_product: { id: string; free_demo: string } }>();
-    expect(landingBody.recommended_product.id).toBe("agent_action_notary");
-    expect(landingBody.recommended_product.free_demo).toContain("/v1/action-notary/demo");
+    expect(landingBody.recommended_product.id).toBe("tiktok_campaign_notary");
+    expect(landingBody.recommended_product.free_demo).toContain("/v1/tiktok-campaign-notary/demo");
     const instructions = await worker.fetch(new Request("https://example.test/llms.txt"), testEnv as Env, {} as ExecutionContext);
     expect(await instructions.text()).toContain("Safe purchase sequence");
   });
@@ -163,5 +163,54 @@ describe("CAPI2 Worker contracts", () => {
     expect(response.status).toBe(200);
     expect(body.valid).toBe(true);
     expect(body.exact_payment.amount).toBe("30000");
+  });
+
+  it("blocks an unauthorized TikTok budget increase for free", async () => {
+    const payload = {
+      action: { type: "update_budget", advertiser_id: "adv_123", campaign_id: "cmp_456", proposed_daily_budget: 5000, currency: "EUR" },
+      authority: { allowed_action_types: ["update_budget"], allowed_advertiser_ids: ["adv_123"], max_daily_budget: 250, allowed_currencies: ["EUR"], require_evidence_hashes: true },
+      evidence: [{ kind: "approval", sha256: "a".repeat(64) }],
+    };
+    const response = await worker.fetch(new Request("https://example.test/v1/tiktok-ad-preflight", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+    }), testEnv as Env, {} as ExecutionContext);
+    const body = await response.json<{ decision: string; billable: boolean; receipt_id: null; findings: Array<{ code: string }> }>();
+    expect(response.status).toBe(200);
+    expect(body.billable).toBe(false);
+    expect(body.receipt_id).toBeNull();
+    expect(body.decision).toBe("block");
+    expect(body.findings.map((item) => item.code)).toContain("budget_above_authority");
+  });
+
+  it("quotes and preflights the paid TikTok campaign notary at five cents", async () => {
+    const response = await worker.fetch(new Request("https://example.test/v1/preflight", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        product_id: "tiktok_campaign_notary",
+        payload: {
+          action: { type: "pause_campaign", advertiser_id: "adv_123", campaign_id: "cmp_456" },
+          authority: { allowed_action_types: ["pause_campaign"], allowed_advertiser_ids: ["adv_123"] },
+          evidence: [],
+        },
+      }),
+    }), testEnv as Env, {} as ExecutionContext);
+    const body = await response.json<{ valid: boolean; exact_payment: { amount: string } }>();
+    expect(response.status).toBe(200);
+    expect(body.valid).toBe(true);
+    expect(body.exact_payment.amount).toBe("50000");
+  });
+
+  it("issues a deterministic verifiable TikTok campaign receipt in the free demo", async () => {
+    const demo = await worker.fetch(new Request("https://example.test/v1/tiktok-campaign-notary/demo"), testEnv as Env, {} as ExecutionContext);
+    const receipt = await demo.json<Record<string, unknown>>();
+    expect(receipt.decision).toBe("block");
+    expect(receipt.billable).toBe(false);
+    expect(String(receipt.receipt_id)).toMatch(/^tn_[a-f0-9]{40}$/);
+
+    const verify = await worker.fetch(new Request("https://example.test/v1/tiktok-campaign-notary/verify", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...receipt, billable: true, demo: false }),
+    }), testEnv as Env, {} as ExecutionContext);
+    const verification = await verify.json<{ valid: boolean; warnings: string[] }>();
+    expect(verification.valid).toBe(true);
+    expect(verification.warnings).toEqual([]);
   });
 });
