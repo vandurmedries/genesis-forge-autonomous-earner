@@ -2,7 +2,12 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local AnalyticsService = game:GetService("AnalyticsService")
 local HttpService = game:GetService("HttpService")
+local MarketplaceService = game:GetService("MarketplaceService")
 local BASE_REWARD, UPGRADE_BASE_COST, MAX_UPGRADE = 10, 100, 20
+local PRODUCT_REWARDS = {
+	[3711031876] = 500,
+	[3711031899] = 2500,
+}
 local funnelSessions = {}
 local feedback = ReplicatedStorage:FindFirstChild("GameFeedback") or Instance.new("RemoteEvent")
 feedback.Name, feedback.Parent = "GameFeedback", ReplicatedStorage
@@ -16,6 +21,18 @@ local function setup(player)
 end
 Players.PlayerAdded:Connect(setup); for _,player in ipairs(Players:GetPlayers()) do setup(player) end
 Players.PlayerRemoving:Connect(function(player) funnelSessions[player]=nil end)
+
+MarketplaceService.ProcessReceipt = function(receiptInfo)
+	local reward = PRODUCT_REWARDS[receiptInfo.ProductId]
+	if not reward then return Enum.ProductPurchaseDecision.NotProcessedYet end
+	local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
+	local stats = player and player:FindFirstChild("leaderstats")
+	local credits = stats and stats:FindFirstChild("Credits")
+	if not credits then return Enum.ProductPurchaseDecision.NotProcessedYet end
+	credits.Value += reward
+	feedback:FireClient(player,{kind="purchase",amount=reward,text="PURCHASE CONFIRMED"})
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
 
 local function logStep(player,step,name)
 	local sessionId=funnelSessions[player]

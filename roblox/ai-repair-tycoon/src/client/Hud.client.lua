@@ -1,11 +1,13 @@
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local TweenService=game:GetService("TweenService")
+local MarketplaceService=game:GetService("MarketplaceService")
 local player=Players.LocalPlayer
+local PRODUCT_CREDITS_500,PRODUCT_CREDITS_2500=3711031876,3711031899
 local gui=Instance.new("ScreenGui"); gui.Name,gui.ResetOnSpawn,gui.Parent="AIRepairHUD",false,player:WaitForChild("PlayerGui")
 local function corner(parent,radius) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,radius); c.Parent=parent end
 local function label(parent,pos,size,text,color,font,textSize) local x=Instance.new("TextLabel"); x.Position,x.Size,x.BackgroundTransparency,x.Text,x.TextColor3,x.TextXAlignment,x.Font,x.TextSize,x.Parent=pos,size,1,text,color,Enum.TextXAlignment.Left,font,textSize,parent; return x end
-local panel=Instance.new("Frame"); panel.Size,panel.Position,panel.BackgroundColor3,panel.BackgroundTransparency,panel.Parent=UDim2.new(0,430,0,184),UDim2.fromOffset(22,22),Color3.fromRGB(7,20,15),.04,gui; corner(panel,16)
+local panel=Instance.new("Frame"); panel.Size,panel.Position,panel.BackgroundColor3,panel.BackgroundTransparency,panel.Parent=UDim2.new(0,430,0,246),UDim2.fromOffset(22,22),Color3.fromRGB(7,20,15),.04,gui; corner(panel,16)
 local stroke=Instance.new("UIStroke"); stroke.Color,stroke.Transparency,stroke.Parent=Color3.fromRGB(61,92,76),.25,panel
 label(panel,UDim2.fromOffset(14,10),UDim2.new(1,-28,0,34),"CAPI2  /  AI REPAIR TYCOON",Color3.fromRGB(189,244,91),Enum.Font.GothamBold,19)
 local objective=label(panel,UDim2.fromOffset(14,45),UDim2.new(1,-28,0,26),"",Color3.fromRGB(170,190,180),Enum.Font.GothamMedium,13)
@@ -13,6 +15,14 @@ local back=Instance.new("Frame"); back.Size,back.Position,back.BackgroundColor3,
 local progress=Instance.new("Frame"); progress.Size,progress.BackgroundColor3,progress.Parent=UDim2.fromScale(0,1),Color3.fromRGB(189,244,91),back; corner(progress,4)
 local status=label(panel,UDim2.fromOffset(14,94),UDim2.new(1,-28,0,42),"",Color3.fromRGB(235,245,240),Enum.Font.GothamBold,16)
 local nextUpgrade=label(panel,UDim2.fromOffset(14,143),UDim2.new(1,-28,0,25),"",Color3.fromRGB(125,205,169),Enum.Font.GothamMedium,13)
+local shopTitle=label(panel,UDim2.fromOffset(14,174),UDim2.new(1,-28,0,18),"REPAIR CREDIT SHOP",Color3.fromRGB(170,190,180),Enum.Font.GothamBold,11)
+local function buyButton(position,size,text,productId)
+	local button=Instance.new("TextButton"); button.Position,button.Size,button.BackgroundColor3,button.Text,button.TextColor3,button.Font,button.TextSize,button.AutoButtonColor,button.Parent=position,size,Color3.fromRGB(26,82,58),text,Color3.fromRGB(235,255,244),Enum.Font.GothamBold,13,true,panel; corner(button,9)
+	button.Activated:Connect(function() MarketplaceService:PromptProductPurchase(player,productId) end)
+	return button
+end
+buyButton(UDim2.fromOffset(14,199),UDim2.new(.5,-21,0,34),"+500  ·  19 R$",PRODUCT_CREDITS_500)
+buyButton(UDim2.new(.5,7,0,199),UDim2.new(.5,-21,0,34),"+2,500  ·  79 R$",PRODUCT_CREDITS_2500)
 local hint=label(gui,UDim2.new(.5,0,1,-18),UDim2.new(0,500,0,42),"1  REPAIR RED UNIT     2  EARN CREDITS     3  UPGRADE AT GREEN TERMINAL",Color3.fromRGB(220,235,227),Enum.Font.GothamMedium,13)
 hint.AnchorPoint,hint.BackgroundColor3,hint.BackgroundTransparency,hint.TextXAlignment=Vector2.new(.5,1),Color3.fromRGB(7,20,15),.12,Enum.TextXAlignment.Center; corner(hint,12)
 local toast=label(gui,UDim2.fromScale(.5,.36),UDim2.fromOffset(330,64),"",Color3.fromRGB(7,20,15),Enum.Font.GothamBlack,18)
@@ -34,5 +44,5 @@ ReplicatedStorage:WaitForChild("GameFeedback").OnClientEvent:Connect(function(da
 	task.delay(1.5,function() if current~=version then return end; TweenService:Create(toast,TweenInfo.new(.3),{BackgroundTransparency=1,TextTransparency=1,Position=UDim2.fromScale(.5,.29)}):Play() end)
 end)
 local camera=workspace.CurrentCamera
-local function responsive() local narrow=camera and camera.ViewportSize.X<700; panel.Size=narrow and UDim2.new(1,-24,0,184) or UDim2.new(0,430,0,184); panel.Position=narrow and UDim2.fromOffset(12,12) or UDim2.fromOffset(22,22); hint.Size=narrow and UDim2.new(1,-24,0,42) or UDim2.new(0,500,0,42) end
+local function responsive() local narrow=camera and camera.ViewportSize.X<700; panel.Size=narrow and UDim2.new(1,-24,0,246) or UDim2.new(0,430,0,246); panel.Position=narrow and UDim2.fromOffset(12,12) or UDim2.fromOffset(22,22); hint.Size=narrow and UDim2.new(1,-24,0,42) or UDim2.new(0,500,0,42) end
 if camera then camera:GetPropertyChangedSignal("ViewportSize"):Connect(responsive) end; responsive()

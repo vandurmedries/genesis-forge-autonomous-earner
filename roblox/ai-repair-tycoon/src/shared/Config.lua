@@ -5,8 +5,8 @@ return {
     UpgradeBaseCost = 100,
     MaxUpgrade = 20,
     DeveloperProducts = {
-        Credits500 = 0, -- Replace with the Creator Dashboard product ID.
-        Credits2500 = 0,
+        Credits500 = 3711031876,
+        Credits2500 = 3711031899,
     },
     ProductRewards = {
         Credits500 = 500,
