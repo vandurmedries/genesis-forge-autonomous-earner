@@ -10,18 +10,55 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: capi2-x402-directory-distribution
+  cancel-in-progress: false
+
 jobs:
   distribute:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Register capi2 endpoints with 402 Index
+      - name: Register CAPI2 with agent marketplaces
         shell: bash
         run: |
           python - <<'PY'
           import json
+          import os
           import urllib.error
+          import urllib.parse
           import urllib.request
+
+          USER_AGENT = "capi2-agent-marketplace-distributor/2.0"
+          PAY_TO = "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a"
+          results = []
+
+          def record(provider, item, status, body=""):
+              body = str(body).replace("\n", " ").replace("\r", " ")[:900]
+              row = {"provider": provider, "item": item, "status": str(status), "body": body}
+              results.append(row)
+              print(json.dumps(row, ensure_ascii=False))
+
+          def post_json(provider, item, endpoint, payload, *, timeout=45):
+              data = json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(
+                  endpoint,
+                  data=data,
+                  headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as resp:
+                      body = resp.read().decode("utf-8", "replace")
+                      record(provider, item, f"HTTP {resp.status}", body)
+                      return resp.status, body
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", "replace")
+                  record(provider, item, f"HTTP {exc.code}", body)
+                  return exc.code, body
+              except Exception as exc:
+                  record(provider, item, f"ERROR {type(exc).__name__}", str(exc))
+                  return None, str(exc)
 
           registrations = [
               {
@@ -29,7 +66,10 @@ jobs:
                   "name": "capi2 Claim Verify",
                   "protocol": "x402",
                   "http_method": "POST",
-                  "probe_body": json.dumps({"vendor_url": "https://example.com/security", "claim": "Vendor states that customer data is encrypted at rest."}),
+                  "probe_body": json.dumps({
+                      "vendor_url": "https://example.com/security",
+                      "claim": "Vendor states that customer data is encrypted at rest.",
+                  }),
                   "description": "Evidence-backed vendor claim verification for AI agents, procurement, due diligence, RFP and security workflows.",
                   "price_usd": 0.01,
                   "payment_asset": "USDC",
@@ -124,72 +164,109 @@ jobs:
               },
           ]
 
-          endpoint = "https://402index.io/api/v1/register"
+          # 1. 402 Index: register every paid route with its price and probe body.
           for item in registrations:
-              data = json.dumps(item).encode()
-              req = urllib.request.Request(endpoint, data=data, headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/1.0"}, method="POST")
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as resp:
-                      body = resp.read().decode("utf-8", "replace")
-                      print(f"402INDEX {item['name']}: HTTP {resp.status} {body[:1200]}")
-              except urllib.error.HTTPError as exc:
-                  body = exc.read().decode("utf-8", "replace")
-                  print(f"402INDEX {item['name']}: HTTP {exc.code} {body[:1200]}")
-              except Exception as exc:
-                  print(f"402INDEX {item['name']}: ERROR {type(exc).__name__}: {exc}")
+              post_json(
+                  "402 Index",
+                  item["name"],
+                  "https://402index.io/api/v1/register",
+                  item,
+              )
+
+          # 2. Market402: submit each URL. Fall back to its legacy form contract
+          # only for validation/media-type responses; never attach payment data.
+          for item in registrations:
+              url = item["url"]
+              status, _ = post_json(
+                  "Market402",
+                  url,
+                  "https://market402.com/submit",
+                  {"url": url},
+              )
+              if status in (400, 404, 415, 422):
+                  form = urllib.parse.urlencode({"url": url}).encode("utf-8")
+                  req = urllib.request.Request(
+                      "https://market402.com/submit",
+                      data=form,
+                      headers={
+                          "Content-Type": "application/x-www-form-urlencoded",
+                          "User-Agent": USER_AGENT,
+                      },
+                      method="POST",
+                  )
+                  try:
+                      with urllib.request.urlopen(req, timeout=45) as resp:
+                          body = resp.read().decode("utf-8", "replace")
+                          record("Market402 form", url, f"HTTP {resp.status}", body)
+                  except urllib.error.HTTPError as exc:
+                      body = exc.read().decode("utf-8", "replace")
+                      record("Market402 form", url, f"HTTP {exc.code}", body)
+                  except Exception as exc:
+                      record("Market402 form", url, f"ERROR {type(exc).__name__}", str(exc))
+
+          # 3. Agent402.Tools: its public contract accepts a bare HTTPS origin.
+          for origin in (
+              "https://capi2-claim-verify.onrender.com",
+              "https://capi2-demand-tools.onrender.com",
+          ):
+              post_json(
+                  "Agent402.Tools",
+                  origin,
+                  "https://agent402.tools/api/index/register",
+                  {"origin": origin},
+                  timeout=60,
+              )
+
+          # 4. x402 Arena: register Claim Verify as an agent. The arena may probe
+          # the supplied route. This request contains no signature, private key,
+          # PAYMENT-SIGNATURE header or payment retry. A 402 from /register is
+          # logged and deliberately left unpaid under the approved zero-cost cap.
+          arena_payload = {
+              "name": "capi2-claim-verify",
+              "endpoint": "https://capi2-claim-verify.onrender.com/v1/claim-verify",
+              "description": "Evidence-backed public vendor-claim verification for autonomous agents and due-diligence workflows.",
+              "niche": "agent-trust",
+              "walletAddress": PAY_TO,
+              "method": "POST",
+              "resourceType": "http",
+              "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                      "vendor_url": {"type": "string", "format": "uri"},
+                      "claim": {"type": "string", "minLength": 2},
+                  },
+                  "required": ["vendor_url", "claim"],
+              },
+              "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                      "verification_status": {"type": "string"},
+                      "evidence": {"type": "array"},
+                  },
+              },
+          }
+          post_json(
+              "x402 Arena",
+              arena_payload["name"],
+              "https://core.x402arena.gg/register",
+              arena_payload,
+              timeout=60,
+          )
+
+          # Human-readable audit evidence in the GitHub Actions run summary.
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as summary:
+                  summary.write("## CAPI2 one-time agent marketplace distribution\n\n")
+                  summary.write("No email, wallet signature, payment retry, subscription or recurring action was used.\n\n")
+                  summary.write("| Provider | Item | Result | Evidence excerpt |\n")
+                  summary.write("|---|---|---|---|\n")
+                  for row in results:
+                      excerpt = row["body"].replace("|", "\\|")[:280]
+                      summary.write(f"| {row['provider']} | {row['item']} | {row['status']} | {excerpt} |\n")
           PY
 
-      - name: Submit capi2 endpoints to Market402
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json
-          import urllib.error
-          import urllib.parse
-          import urllib.request
-
-          urls = [
-              "https://capi2-claim-verify.onrender.com/v1/claim-verify",
-              "https://capi2-demand-tools.onrender.com/v1/hash/sha256",
-              "https://capi2-demand-tools.onrender.com/v1/hash/sha512",
-              "https://capi2-demand-tools.onrender.com/v1/base64/encode",
-              "https://capi2-demand-tools.onrender.com/v1/base64/decode",
-              "https://capi2-demand-tools.onrender.com/v1/jwt/decode",
-              "https://capi2-demand-tools.onrender.com/v1/json/canonicalize",
-          ]
-
-          endpoint = "https://market402.com/submit"
-          for url in urls:
-              payload = json.dumps({"url": url}).encode()
-              req = urllib.request.Request(endpoint, data=payload, headers={"Content-Type": "application/json", "User-Agent": "capi2-directory-distributor/1.0"}, method="POST")
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as resp:
-                      body = resp.read().decode("utf-8", "replace")
-                      print(f"MARKET402 {url}: HTTP {resp.status} {body[:1200]}")
-                      continue
-              except urllib.error.HTTPError as exc:
-                  body = exc.read().decode("utf-8", "replace")
-                  print(f"MARKET402 JSON {url}: HTTP {exc.code} {body[:800]}")
-                  if exc.code not in (400, 404, 415, 422):
-                      continue
-              except Exception as exc:
-                  print(f"MARKET402 JSON {url}: ERROR {type(exc).__name__}: {exc}")
-                  continue
-
-              form = urllib.parse.urlencode({"url": url}).encode()
-              req = urllib.request.Request(endpoint, data=form, headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "capi2-directory-distributor/1.0"}, method="POST")
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as resp:
-                      body = resp.read().decode("utf-8", "replace")
-                      print(f"MARKET402 FORM {url}: HTTP {resp.status} {body[:1200]}")
-              except urllib.error.HTTPError as exc:
-                  body = exc.read().decode("utf-8", "replace")
-                  print(f"MARKET402 FORM {url}: HTTP {exc.code} {body[:1200]}")
-              except Exception as exc:
-                  print(f"MARKET402 FORM {url}: ERROR {type(exc).__name__}: {exc}")
-          PY
-
-      - name: Audit x402scan discovery readiness
+      - name: Audit x402 discovery readiness
         shell: bash
         continue-on-error: true
         run: |
@@ -203,7 +280,9 @@ jobs:
         continue-on-error: true
         run: |
           python - <<'PY'
-          import json, urllib.request
+          import json
+          import urllib.request
+
           url = "https://x402.direct/api/services?limit=100&sort=newest"
           try:
               with urllib.request.urlopen(url, timeout=30) as resp:
