@@ -1,0 +1,61 @@
+{
+  "provider": {
+    "contact_email": "capi2@agentmail.to",
+    "base_usdc_payout_wallet": "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a"
+  },
+  "api": {
+    "name": "CAPI2 Vendor Risk Pack",
+    "description": "Verify up to five vendor claims against buyer-supplied public sources and return per-claim evidence plus a compact supported, contradicted and uncertain risk summary. Decision support only; not certification or legal advice.",
+    "category_preference": [
+      "Security & Compliance",
+      "Data & Intelligence"
+    ],
+    "search_keywords": [
+      "vendor risk",
+      "supplier due diligence",
+      "security questionnaire",
+      "vendor claims",
+      "procurement evidence",
+      "compliance evidence"
+    ],
+    "buyer_queries": [
+      "verify multiple vendor claims",
+      "supplier due diligence evidence pack",
+      "check security questionnaire claims"
+    ],
+    "base_url": "https://capi2-agent-commerce.vandurmedries.workers.dev",
+    "discovery_paths": {
+      "x402": "/.well-known/x402",
+      "agent": "/.well-known/agent.json",
+      "openapi": "/openapi.json"
+    },
+    "endpoint_method": "POST",
+    "endpoint_path": "/v1/vendor-risk-pack",
+    "input_example": {
+      "claims": [
+        {
+          "vendor_url": "https://example.com/security",
+          "claim": "Customer data is encrypted at rest."
+        }
+      ]
+    },
+    "result_delivery": "inline_json_after_successful_x402_payment_and_execution",
+    "price_per_request_usdc": "0.25",
+    "network": "eip155:8453",
+    "asset": "USDC",
+    "payment_protocol": "x402",
+    "bazaar_discovery_extension": true
+  },
+  "verification": {
+    "required_http_status_unpaid": 402,
+    "required_pay_to": "0x4B4031bd3B334e010E6ecE66d14DEa59eB34122a",
+    "required_network": "eip155:8453",
+    "required_asset": "USDC",
+    "health_path": "/health",
+    "x402_manifest_path": "/.well-known/x402",
+    "openapi_path": "/openapi.json",
+    "runtime": "cloudflare-workers",
+    "verified_unpaid_challenge_at": "2026-09-27T08:58:35Z",
+    "payment_sent": false
+  }
+}
