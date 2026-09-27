@@ -31,14 +31,11 @@
       "vendor risk evidence check",
       "RFP or security questionnaire claim verification"
     ],
-    "base_url": "https://capi2-claim-verify.onrender.com",
+    "base_url": "https://capi2-agent-commerce.vandurmedries.workers.dev",
     "discovery_paths": {
       "x402": "/.well-known/x402",
       "agent": "/.well-known/agent.json",
-      "openapi": "/openapi.json",
-      "llms": "/llms.txt",
-      "robots": "/robots.txt",
-      "examples": "/v1/examples"
+      "openapi": "/openapi.json"
     },
     "quote_path": "/v1/quote",
     "endpoint_method": "POST",
@@ -52,7 +49,7 @@
       "request_type": "vendor_due_diligence"
     },
     "result_delivery": "inline_json_after_successful_x402_payment_and_execution",
-    "price_per_request_usdc": "0.01",
+    "price_per_request_usdc": "0.10",
     "network": "eip155:8453",
     "asset": "USDC",
     "payment_protocol": "x402",
@@ -97,10 +94,7 @@
     "agent_manifest_path": "/.well-known/agent.json",
     "x402_manifest_path": "/.well-known/x402",
     "quote_path": "/v1/quote",
-    "schema_path": "/v1/claim-verify/schema",
     "openapi_path": "/openapi.json",
-    "llms_path": "/llms.txt",
-    "render_deploy_status": "production_payment_verified",
     "runtime_startup_verified": true,
     "external_x402_marketplace_check": "PayAPI Market paid canary succeeded",
     "paid_canary": {
@@ -108,7 +102,16 @@
       "network": "eip155:8453",
       "http_status": 200,
       "settlement_transaction": "0x4e94a877189eda0e0eb8950a1a1fde68cef7b1dee85edc2bc1e31834617c38fb",
-      "organic_customer_sale": false
+      "organic_customer_sale": false,
+      "note": "Historical PayAPI Market paid canary on the legacy deployment; current production quote is 0.10 USDC."
+    },
+    "runtime": "cloudflare-workers",
+    "production_health_verified_at": "2026-09-27T08:27:25.794Z",
+    "current_quote": {
+      "amount_usdc": "0.10",
+      "network": "eip155:8453",
+      "asset": "USDC",
+      "resource": "https://capi2-agent-commerce.vandurmedries.workers.dev/v1/claim-verify"
     }
   }
 }
